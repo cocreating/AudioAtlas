@@ -1,0 +1,6 @@
+{
+  "identifier": "main",
+  "description": "Local main window; folder authorization happens in Rust native dialogs.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
