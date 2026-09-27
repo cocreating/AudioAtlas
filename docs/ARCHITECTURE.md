@@ -1,10 +1,11 @@
-# Arquitectura · incremento 01
+# Arquitectura · incremento 02
 
 ## Estructura
 
 ```text
 src/
   lib/api.ts               Contrato de IPC y tipos de la interfaz
+  lib/Audition.svelte      Forma de onda, seek y controles de loop A/B
   lib/Icon.svelte          Iconos locales
   routes/+page.svelte      Biblioteca, inspector, bandeja y transporte
   routes/+layout.ts        SPA sin SSR
@@ -14,14 +15,17 @@ src-tauri/
   src/commands.rs          Comandos IPC y diálogos de autorización
   src/catalog.rs           SQLite, escaneo, consultas, anotaciones y copias
   src/playback.rs          Servicio de audio con canal de mensajes
+  src/audio_stream.rs      Decoder dedicado y FIFO de tamaño fijo
+  src/waveform.rs          Envolvente multinivel y caché por contenido
   migrations/001_catalog.sql
   capabilities/main.json
 scripts/create-fixtures.py Audios originales de prueba
+scripts/create-codec-fixtures.py Corpus opcional de siete formatos
 ```
 
 ## Decisiones
 
-- Se respeta Tauri 2 + SvelteKit 5/TypeScript + adapter-static + CSS nativo de la propuesta. La UI no incorpora servicios, contenido remoto ni telemetría.
+- Se respeta Tauri 2 + SvelteKit 2 + Svelte 5/TypeScript + adapter-static + CSS nativo de la propuesta. La UI no incorpora servicios, contenido remoto ni telemetría.
 - SQLite bundled, migración inicial, foreign keys, WAL y FTS5. Cada operación abre su conexión; el escaneo no mantiene una transacción sobre todo el lote y las búsquedas pueden ejecutarse mientras avanza.
 - Consultas parametrizadas con palabras FTS escapadas y prefijos; sin concatenar texto de usuario a SQL. Debounce de 180 ms y rechazo de respuestas antiguas en la interfaz. La cancelación real de SQL no está implementada.
 - Resultados por cursor `(name,id)` y 100 filas por página. La virtualización de la tabla y los benchmarks de 100.000 registros son el siguiente incremento de rendimiento.
@@ -33,11 +37,21 @@ scripts/create-fixtures.py Audios originales de prueba
 
 ## Motor de audio provisional
 
-Rodio 0.21.1 + Symphonia 0.5.5 prueban salida nativa y seek en la primera vertical. Se fijan en Cargo.lock. El servicio posee la salida y Sink en su propio hilo; el frontend sólo solicita operaciones y consulta estado. No se precarga el audio completo ni se transporta por JSON.
+Rodio 0.21.1 + Symphonia 0.5.5 prueban salida nativa y seek en la primera vertical. Se fijan en Cargo.lock. El servicio posee la salida y Sink en su propio hilo; el frontend sólo solicita operaciones y consulta estado. Cada fuente decodifica en un worker y entrega frames mono/estéreo a un FIFO SPSC de ringbuf 0.4.8: 16.384 frames, 256 KiB más los buffers del decoder. El consumidor de audio sólo lee el FIFO y actualiza atómicos: no decodifica, accede al disco, espera ni toma mutex propios. Si falta audio emite silencio, conserva la posición y cuenta underruns visibles en la UI. No se precarga el archivo completo ni se transporta por JSON.
 
-**Esta prueba no sustituye la decisión final sobre FFmpeg/ffprobe de la propuesta.** Su distribución con binarios por arquitectura, checksums, flags de compilación y licencias está pendiente. No se reutiliza el FFmpeg de Homebrew del desarrollador dentro del producto. Antes de cerrar el motor, medir decodificación fuera del callback de salida, latencia, seek de formatos comprimidos, recuperación del dispositivo y empaquetado en un Mac limpio.
+El worker vuelve a A al llegar a B, sin acumular en memoria el intervalo. Seek y cambios de loop reconstruyen la fuente preservando pausa y volumen; activar un loop fuera del intervalo coloca la posición en A. Los comandos de loop incluyen fileId para rechazar cambios atrasados de otro archivo. Detener elimina la fuente y el loop. La preparación espera hasta 8 segundos, y su cancelación es cooperativa: no interrumpe una lectura bloqueada por el sistema. La posición publicada se limita a la duración conocida, evitando errores al activar un loop después del final.
+
+**Esta prueba no sustituye la decisión final sobre FFmpeg/ffprobe de la propuesta.** Su distribución con binarios por arquitectura, checksums, flags de compilación y licencias está pendiente. No se reutiliza el FFmpeg de Homebrew del desarrollador dentro del producto. Antes de cerrar el motor, medir latencia, precisión del seek de formatos comprimidos, recuperación del dispositivo y empaquetado en un Mac limpio.
 
 Por ahora se rechaza más de dos canales; no se promete un downmix. No se eligen dispositivos ni se recuperan fallos de salida. No hay procesamiento de volumen perceptual, tempo ni transposición.
+
+## Forma de onda
+
+El análisis se solicita explícitamente para el archivo en preescucha y trabaja fuera de la UI. Calcula SHA-256 completo en bloques de 64 KiB y decodifica PCM por paquetes para obtener extremos de todos los canales. El acumulador conserva como máximo 2.048 bins y los fusiona al crecer, generando niveles progresivamente más gruesos; no guarda todo el PCM. La vista usa un nivel de hasta 512 bins, seek accesible y resaltado del intervalo A/B. No es una vista de zoom a nivel de muestra.
+
+La caché vive en el directorio de caché de Tauri, subcarpeta `waveforms`, con versión y hash de contenido en el nombre. Los temporales se publican de forma atómica; una caché inválida se regenera. Se verifican tamaño, tiempos e inode del original durante el análisis y se conservan hasta 128 entradas propias. Cada actualización vuelve a leer el original para calcular el hash.
+
+Sólo se ejecuta un análisis pesado simultáneo; la nueva solicitud invalida la anterior. Cancelación y límite de 120 s se comprueban entre lecturas y paquetes, sin prometer interrupción inmediata de E/S bloqueada. Cambiar de archivo descarta respuestas antiguas. Las regiones de loop son temporales y no alteran archivos ni exportaciones. Aún no hay fades ni garantía de transiciones sin clics.
 
 ## Exportación
 

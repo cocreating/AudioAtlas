@@ -3,6 +3,7 @@
   import { resolve } from '$app/paths';
   import { listen } from '@tauri-apps/api/event';
   import Icon from '$lib/Icon.svelte';
+  import Audition from '$lib/Audition.svelte';
   import {
     api,
     native,
@@ -38,7 +39,10 @@
     playing: false,
     position: 0,
     duration: 0,
-    volume: 0.6
+    volume: 0.6,
+    loopRegion: null,
+    underrunFrames: 0,
+    error: null
   });
   let tray = $state<AudioFile[]>([]);
   let busy = $state(false);
@@ -183,21 +187,21 @@
     });
   }
   async function control(command: Control) {
-    await run(async () => {
+    error = '';
+    try {
       await api.control(command);
       player = await api.player();
-    });
+      return true;
+    } catch (e) {
+      error = String(e);
+      return false;
+    }
   }
   async function toggle() {
     if (selected && selected.id !== player.fileId) await play(selected);
     else if (player.fileId && player.playing)
       await control({ action: 'pause' });
-    else if (
-      player.fileId &&
-      player.position > 0 &&
-      player.position < player.duration - 0.1
-    )
-      await control({ action: 'resume' });
+    else if (player.fileId) await control({ action: 'resume' });
     else await play(selected ?? playingFile);
   }
   function step(direction: number) {
@@ -299,7 +303,10 @@
       if (polling || disposed) return;
       polling = true;
       try {
-        if (player.fileId) player = await api.player();
+        if (player.fileId) {
+          player = await api.player();
+          if (player.error) error = player.error;
+        }
         if (data.scanning) await refresh();
       } catch (e) {
         error = String(e);
@@ -752,6 +759,11 @@
           </div>{/if}
       </aside>
     </div>
+    {#if playingFile}
+      {#key playingFile.id}
+        <Audition file={playingFile} {player} oncontrol={control} />
+      {/key}
+    {/if}
     <div class="session-bar">
       <Icon name="tray" /><strong>Bandeja de sesión</strong><span
         >{tray.length

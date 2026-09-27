@@ -37,12 +37,27 @@ export interface Library {
   next: Cursor | null;
   scanning: boolean;
 }
+export interface LoopRegion {
+  start: number;
+  end: number;
+}
+export interface Waveform {
+  version: number;
+  sha256: string;
+  sampleRate: number;
+  channels: number;
+  frames: number;
+  levels: { framesPerBin: number; peaks: [number, number][] }[];
+}
 export interface Player {
   fileId: string | null;
   playing: boolean;
   position: number;
   duration: number;
   volume: number;
+  loopRegion: LoopRegion | null;
+  underrunFrames: number;
+  error: string | null;
 }
 export interface Progress {
   indexed: number;
@@ -63,7 +78,8 @@ export interface ExportResult {
 }
 export type Control =
   | { action: 'pause' | 'resume' | 'stop' }
-  | { action: 'seek' | 'volume'; value: number };
+  | { action: 'seek' | 'volume'; value: number }
+  | { action: 'setLoop'; value: { fileId: string; region: LoopRegion | null } };
 export const native = isTauri;
 export const api = {
   library: (query: {
@@ -83,6 +99,8 @@ export const api = {
   player: () => invoke<Player>('player_state'),
   export: (ids: string[]) =>
     invoke<ExportResult | null>('export_files', { ids }),
+  waveform: (id: string) => invoke<Waveform>('waveform', { id }),
+  cancelWaveform: () => invoke<void>('cancel_waveform'),
   reveal: (id: string) => invoke<void>('reveal', { id })
 };
 export function time(seconds: number | null): string {

@@ -6,7 +6,7 @@ Actualizado: 27 de septiembre de 2026.
 
 Audio Atlas es una aplicación de escritorio local para catalogar, buscar, escuchar, etiquetar y reunir audios para composición y trabajo con Ableton Live. Indexa archivos donde están y guarda organización virtual en su catálogo. No mueve ni modifica originales.
 
-La implementación actual es el incremento 01: una primera vertical ejecutable. La fase 1 completa de la propuesta todavía no está aceptada. No ampliar a análisis musical, IA, similitud, Link ni automatización del DAW antes de completar y verificar los fundamentos.
+La implementación actual es el incremento 02: vertical ejecutable con waveform real, loop A/B y decoder desacoplado de la salida. La fase 1 completa de la propuesta todavía no está aceptada. No ampliar a análisis musical, IA, similitud, Link ni automatización del DAW antes de completar y verificar los fundamentos.
 
 ## Preferencias y decisiones vigentes
 
@@ -14,7 +14,7 @@ La implementación actual es el incremento 01: una primera vertical ejecutable. 
 - La propuesta del proyecto elige Svelte para esta interfaz. No introducir React ni frameworks CSS. Estilos propios en CSS nativo.
 - macOS Apple Silicon como primer objetivo. Se compiló en macOS 26.6.2 arm64. macOS 13 es sólo el mínimo configurado; no se ha validado allí ni en Intel/Windows.
 - SQLite bundled con WAL, FTS5 y migración inicial transaccional. El catálogo reside en el directorio de datos de la aplicación.
-- Preescucha provisional: Rodio 0.21.1 y Symphonia 0.5.5, fijados mediante Cargo.lock. Lectura streaming; el frontend recibe estado, no PCM. Sólo mono/estéreo y salida predeterminada.
+- Preescucha provisional: Rodio 0.21.1 y Symphonia 0.5.5, fijados mediante Cargo.lock. Lectura streaming en worker mediante FIFO fijo ringbuf 0.4.8 de 16.384 frames; el frontend recibe estado y picos de waveform, no PCM. Sólo mono/estéreo y salida predeterminada.
 - FFmpeg/ffprobe empaquetados siguen pendientes. El decoder Rust permite probar la vertical; no supone que se haya cerrado o sustituido el requisito de distribución de la propuesta.
 - Sin cuenta, servicios cloud, telemetría ni contenido web remoto. Vite sólo sirve durante el desarrollo; la aplicación empaquetada no levanta un servidor HTTP.
 
@@ -23,12 +23,16 @@ La implementación actual es el incremento 01: una primera vertical ejecutable. 
 | Ruta | Responsabilidad |
 |---|---|
 | `src/routes/+page.svelte` | Biblioteca, búsqueda, inspector, bandeja y reproductor |
+| `src/lib/Audition.svelte` | Waveform real, seek, generación/cancelación y loop A/B |
 | `src/lib/api.ts` | Contrato IPC y tipos del frontend |
 | `src/app.css` | Diseño propio, oscuro y adaptable |
 | `src-tauri/src/lib.rs` | Arranque, registro de comandos y estado |
 | `src-tauri/src/commands.rs` | IPC, diálogos y coordinación de tareas |
 | `src-tauri/src/catalog.rs` | Persistencia, escaneo, consultas, anotaciones, exportación y pruebas |
 | `src-tauri/src/playback.rs` | Motor nativo controlado por canal de mensajes |
+| `src-tauri/src/audio_stream.rs` | Decoder dedicado, FIFO fijo y repetición A/B |
+| `src-tauri/src/waveform.rs` | Envolvente multinivel acotada, hash y caché regenerable |
+| `src-tauri/examples/verify_codecs.rs` | Compatibilidad básica del corpus de siete formatos |
 | `src-tauri/migrations/001_catalog.sql` | roots, files, annotations, FTS y exports |
 | `src-tauri/examples/verify_vertical.rs` | Comprobación aislada del catálogo y salida de audio |
 | `scripts/create-fixtures.py` | Generación reproducible de audios propios para pruebas |
@@ -64,7 +68,7 @@ npm run tauri -- build --debug --bundles app
 Aplicación generada: `src-tauri/target/debug/bundle/macos/Audio Atlas.app`.
 Catálogo del usuario: `~/Library/Application Support/studio.audioatlas.desktop/catalog.sqlite`.
 
-SQLite usa WAL: no respaldar sólo el archivo principal mientras la app está abierta. No borrar ni reinicializar el catálogo del usuario para probar código. Usar fixtures y catálogos temporales. No interrumpir su sesión nativa si está interactuando con la aplicación.
+SQLite usa WAL: no respaldar sólo el archivo principal mientras la app está abierta. No borrar ni reinicializar el catálogo del usuario para probar código. Usar fixtures y catálogos temporales. No interrumpir su sesión nativa si está interactuando con la aplicación. Para revisión visual se usó una app separada con identificador `studio.audioatlas.qa` y config local ignorada `artifacts/tauri-qa.json`; nunca reutilizar ese identificador al compilar el bundle normal. El corpus opcional se genera con `python3 scripts/create-codec-fixtures.py` (requiere FFmpeg sólo en desarrollo) y se prueba con `cargo run --manifest-path src-tauri/Cargo.toml --example verify_codecs -- test-fixtures/codecs`.
 
 ## Control de versiones
 

@@ -1,6 +1,8 @@
+pub mod audio_stream;
 pub mod catalog;
 mod commands;
 pub mod playback;
+pub mod waveform;
 
 use std::sync::{atomic::AtomicBool, Arc};
 use tauri::Manager;
@@ -8,6 +10,7 @@ use tauri::Manager;
 pub struct AppState {
     pub catalog: catalog::Catalog,
     pub playback: playback::Playback,
+    pub waveforms: waveform::Waveforms,
     pub scanning: Arc<AtomicBool>,
     pub cancel_scan: Arc<AtomicBool>,
 }
@@ -22,6 +25,7 @@ pub fn run() {
                 catalog: catalog::Catalog::open(directory.join("catalog.sqlite"))
                     .map_err(|e| std::io::Error::other(e.to_string()))?,
                 playback: playback::Playback::start(),
+                waveforms: waveform::Waveforms::new(app.path().app_cache_dir()?.join("waveforms")),
                 scanning: Arc::new(AtomicBool::new(false)),
                 cancel_scan: Arc::new(AtomicBool::new(false)),
             });
@@ -37,7 +41,9 @@ pub fn run() {
             commands::transport,
             commands::player_state,
             commands::export_files,
-            commands::reveal
+            commands::reveal,
+            commands::waveform,
+            commands::cancel_waveform
         ])
         .run(tauri::generate_context!())
         .expect("No se pudo iniciar Audio Atlas");

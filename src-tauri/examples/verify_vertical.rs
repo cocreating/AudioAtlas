@@ -1,7 +1,8 @@
 //! Runs against an isolated catalog and explicitly supplied fixture directory.
 use audio_atlas_lib::{
     catalog::{hash_file, Annotation, Catalog, Query},
-    playback::{Control, Playback},
+    playback::{Control, LoopRegion, Playback},
+    waveform::Waveforms,
 };
 use std::{path::PathBuf, sync::atomic::AtomicBool, time::Duration};
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -47,6 +48,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         1
     );
     println!("Catalog: {} files; {} decoder errors isolated; annotations survive reopen; export SHA-256 verified; source unchanged",report.indexed,report.errors);
+    let waves = Waveforms::new(temp.path().join("waveforms"));
+    let waveform = waves.get(&path, waves.begin())?;
+    assert!(waveform.levels[0].peaks.len() <= 2048);
+    assert_eq!(waves.get(&path, waves.begin())?.sha256, hash);
+    println!(
+        "Waveform: {} frames, {} levels, content hash and cache reuse verified",
+        waveform.frames,
+        waveform.levels.len()
+    );
     if std::env::args().any(|a| a == "--audio") {
         let player = Playback::start();
         // Exercise the real output stream silently; this is not an audible quality test.
@@ -65,7 +75,39 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         assert!((player.state()?.position - paused.position).abs() < 0.1);
         player.control(Control::Resume)?;
         assert!(player.state()?.playing);
+        player.control(Control::SetLoop {
+            file_id: long.id.clone(),
+            region: Some(LoopRegion {
+                start: 1.0,
+                end: 1.2,
+            }),
+        })?;
+        std::thread::sleep(Duration::from_millis(550));
+        let looped = player.state()?;
+        assert!(looped.playing);
+        assert!((1.0..=1.2).contains(&looped.position));
+        assert!(player
+            .control(Control::SetLoop {
+                file_id: "stale-file".into(),
+                region: None
+            })
+            .is_err());
+        player.control(Control::Pause)?;
+        player.control(Control::Seek(1.05))?;
+        let paused_loop = player.state()?;
+        assert!(!paused_loop.playing);
+        assert!((1.04..1.08).contains(&paused_loop.position));
+        player.control(Control::SetLoop {
+            file_id: long.id.clone(),
+            region: None,
+        })?;
+        assert!(player.state()?.loop_region.is_none());
         player.control(Control::Stop)?;
+        let stopped = player.state()?;
+        assert!(stopped.file_id.is_none());
+        assert_eq!(stopped.position, 0.0);
+        assert!(!stopped.playing);
+        println!("Native loop A/B: repeats, rejects stale file, seeks while paused, disables and clears on stop.");
         println!("Native output: start, seek to {:.2}s, pause, resume and stop passed at volume zero. Listening quality not assessed.",state.position);
     }
     Ok(())

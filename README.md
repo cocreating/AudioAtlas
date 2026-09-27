@@ -1,6 +1,6 @@
 # Audio Atlas
 
-Biblioteca de audio local para macOS. Primera vertical ejecutable de la [propuesta](.agents/docs/Audio-Atlas-propuesta-y-prompt-tecnico.md), no fase 1 completa.
+Biblioteca de audio local para macOS. Incremento 02 ejecutable de la [propuesta](.agents/docs/Audio-Atlas-propuesta-y-prompt-tecnico.md), no fase 1 completa.
 
 Para retomar el desarrollo, empieza por el [contexto y avance en `.agents/docs`](.agents/docs/README.md).
 
@@ -29,10 +29,11 @@ La aplicación de desarrollo queda en `src-tauri/target/debug/bundle/macos/Audio
 
 1. Abre la aplicación de escritorio y pulsa **Añadir carpeta**. Puedes elegir `test-fixtures/sonidos` después de ejecutar `npm run fixtures`.
 2. Selecciona un archivo, pulsa **Escuchar** y mueve el control de posición. Doble clic también reproduce. El reproductor permite pausa, volumen y navegación anterior/siguiente.
-3. Escribe etiquetas separadas por comas y notas; pulsa **Guardar cambios**. El corazón guarda el favorito y las anotaciones del inspector.
-4. Busca por nombre, ruta relativa, etiquetas o notas. Combina fuente, favoritos y formato. Los resultados se consultan en páginas de 100 mediante cursor.
-5. Añade archivos con **+** a la bandeja. **Exportar copias** crea una carpeta de sesión duradera, con SHA-256 y `manifest.json`, dentro del destino que elijas. Nunca sobrescribe archivos existentes. La bandeja es temporal y se vacía al cerrar.
-6. Cierra y abre la app: fuentes, archivos, favoritos, etiquetas y notas permanecen en SQLite. Una fuente desconectada conserva sus entradas. El botón de reescaneo aparece al seleccionar una fuente.
+3. En **Preescucha**, pulsa **Generar forma de onda** para analizar el audio real. Puedes buscar una posición sobre la onda y detener el análisis. Define A y B en segundos (o usa **Marcar A/B**) y pulsa **Activar loop**; el intervalo sólo afecta a la preescucha y dura al menos 0,05 s.
+4. Escribe etiquetas separadas por comas y notas; pulsa **Guardar cambios**. El corazón guarda el favorito y las anotaciones del inspector.
+5. Busca por nombre, ruta relativa, etiquetas o notas. Combina fuente, favoritos y formato. Los resultados se consultan en páginas de 100 mediante cursor.
+6. Añade archivos con **+** a la bandeja. **Exportar copias** crea una carpeta de sesión duradera, con SHA-256 y `manifest.json`, dentro del destino que elijas. Nunca sobrescribe archivos existentes. La bandeja es temporal y se vacía al cerrar.
+7. Cierra y abre la app: fuentes, archivos, favoritos, etiquetas y notas permanecen en SQLite. Una fuente desconectada conserva sus entradas. El botón de reescaneo aparece al seleccionar una fuente.
 
 Atajos: **Cmd+F** busca; **Espacio** reproduce/pausa cuando el foco no está en un control; flechas arriba/abajo seleccionan cuando el foco está fuera de los controles. No se capturan letras ni espacio durante la edición.
 
@@ -40,8 +41,8 @@ Atajos: **Cmd+F** busca; **Espacio** reproduce/pausa cuando el foco no está en 
 
 El catálogo está en `~/Library/Application Support/studio.audioatlas.desktop/catalog.sqlite`. La app no modifica audios ni escribe etiquetas dentro de ellos. SQLite usa WAL: no copies sólo el archivo principal con la app abierta. El backup/restauración coordinados todavía no están implementados.
 
-Se prueban archivos WAV reales generados localmente. Symphonia detecta el contenido y obtiene el códec; WAV, AIFF, FLAC, MP3, AAC, M4A y OGG son candidatos por extensión y dependen de los códecs admitidos. La columna **Formato** refleja la extensión; el inspector muestra además el códec detectado. La validación completa de cada combinación de contenedor y códec está pendiente. No se analiza BPM ni tonalidad.
+Se prueban WAV reales generados localmente y un corpus propio convertido a WAV, AIFF, FLAC, MP3, M4A, AAC y OGG. Las siete muestras superaron generación de onda, apertura, seek e inicio de loop; esto no cubre todas las variantes ni garantiza precisión de loop en formatos comprimidos. Symphonia detecta el contenido y obtiene el códec; WAV, AIFF, FLAC, MP3, AAC, M4A y OGG son candidatos por extensión y dependen de los códecs admitidos. La columna **Formato** refleja la extensión; el inspector muestra además el códec detectado. La validación completa de cada combinación de contenedor y códec está pendiente. No se analiza BPM ni tonalidad.
 
-El motor inicial Rodio/Symphonia lee el archivo en streaming, sin enviar PCM al frontend. Se limita a mono/estéreo; el audio multicanal se rechaza hasta definir el downmix. Usa la salida predeterminada del sistema. Waveform, loop A/B, fades, cambio de dispositivo y recuperación de desconexiones siguen pendientes. La cancelación del escaneo se comprueba entre archivos, no interrumpe una llamada al decoder.
+El motor provisional Rodio/Symphonia decodifica en un hilo dedicado y alimenta la salida mediante un búfer fijo, sin enviar PCM al frontend. Se limita a mono/estéreo; el audio multicanal se rechaza hasta definir el downmix. Usa la salida predeterminada del sistema. La forma de onda se calcula por bloques bajo demanda y se guarda en una caché regenerable por SHA-256, limitada a 128 entradas. El loop A/B mantiene memoria acotada. Fades, cambio de dispositivo y recuperación de desconexiones siguen pendientes. La cancelación del escaneo se comprueba entre archivos, no interrumpe una llamada al decoder.
 
 Consulta [estado y validación](docs/STATUS.md), [arquitectura](docs/ARCHITECTURE.md) y [dependencias y licencias](docs/DEPENDENCIES.md).

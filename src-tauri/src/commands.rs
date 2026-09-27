@@ -151,3 +151,18 @@ pub async fn reveal(app: AppHandle, id: String) -> Result<(), String> {
     })
     .await
 }
+
+#[tauri::command]
+pub async fn waveform(app: AppHandle, id: String) -> Result<crate::waveform::Waveform, String> {
+    let ticket = app.state::<AppState>().waveforms.begin();
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let path = state.catalog.resolve(&id).map_err(|e| e.to_string())?;
+        state.waveforms.get(&path, ticket)
+    })
+    .await
+}
+#[tauri::command]
+pub fn cancel_waveform(app: AppHandle) {
+    app.state::<AppState>().waveforms.cancel();
+}
