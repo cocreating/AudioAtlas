@@ -30,6 +30,24 @@ pub struct Root {
 }
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct Collection {
+    pub id: String,
+    pub name: String,
+    pub color: Option<String>,
+    pub count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartQuery {
+    pub id: String,
+    pub name: String,
+    pub filter_json: String,
+    pub created_at: String,
+}
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioFile {
     pub id: String,
     pub root_id: String,
@@ -47,6 +65,8 @@ pub struct AudioFile {
     pub favorite: bool,
     pub tags: Vec<String>,
     pub notes: String,
+    pub rating: u8,
+    pub user_status: String,
 }
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +75,8 @@ pub struct Query {
     pub root_id: Option<String>,
     pub favorites: bool,
     pub format: Option<String>,
+    pub collection_id: Option<String>,
+    pub min_rating: Option<u8>,
     pub after: Option<Cursor>,
 }
 #[derive(Serialize, Deserialize, Clone)]
@@ -67,17 +89,38 @@ pub struct Cursor {
 pub struct Library {
     pub roots: Vec<Root>,
     pub files: Vec<AudioFile>,
+    pub collections: Vec<Collection>,
+    pub smart_queries: Vec<SmartQuery>,
     pub total: i64,
     pub favorites: i64,
     pub matched: i64,
     pub next: Option<Cursor>,
     pub scanning: bool,
 }
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct Annotation {
     pub favorite: bool,
     pub tags: Vec<String>,
     pub notes: String,
+    #[serde(default)]
+    pub rating: u8,
+    #[serde(default = "default_status")]
+    pub status: String,
+}
+fn default_status() -> String {
+    "pending".to_string()
+}
+impl Default for Annotation {
+    fn default() -> Self {
+        Self {
+            favorite: false,
+            tags: Vec::new(),
+            notes: String::new(),
+            rating: 0,
+            status: "pending".to_string(),
+        }
+    }
 }
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -109,8 +152,8 @@ impl Catalog {
         let catalog = Self { path };
         let conn = catalog.connect()?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
-        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 1 {
+        let mut version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version > 2 {
             return Err("El catálogo pertenece a una versión más reciente".into());
         }
         if version == 0 {
@@ -118,6 +161,15 @@ impl Catalog {
                 "BEGIN IMMEDIATE;\n{}\nCOMMIT;",
                 include_str!("../migrations/001_catalog.sql")
             ))?;
+            conn.pragma_update(None, "user_version", 1)?;
+            version = 1;
+        }
+        if version == 1 {
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE;\n{}\nCOMMIT;",
+                include_str!("../migrations/002_phase1.sql")
+            ))?;
+            conn.pragma_update(None, "user_version", 2)?;
         }
         Ok(catalog)
     }
@@ -315,6 +367,8 @@ impl Catalog {
     pub fn query(&self, query: Query) -> Result<Library> {
         let conn = self.connect()?;
         let roots = conn.prepare("SELECT r.id,r.name,r.path,COUNT(f.id) FROM roots r LEFT JOIN files f ON f.root_id=r.id GROUP BY r.id ORDER BY r.name")?.query_map([], |r| { let path: String = r.get(2)?; Ok(Root {id:r.get(0)?,name:r.get(1)?,online:Path::new(&path).is_dir(),path,count:r.get(3)?}) })?.collect::<std::result::Result<Vec<_>,_>>()?;
+        let collections = self.list_collections_with_conn(&conn)?;
+        let smart_queries = self.list_smart_queries_with_conn(&conn)?;
         let total = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
         let favorites = conn.query_row(
             "SELECT COUNT(*) FROM annotations WHERE favorite=1",
@@ -333,13 +387,20 @@ impl Catalog {
         } else {
             Some(search)
         };
-        let base = "FROM files f JOIN annotations a ON a.file_id=f.id WHERE (?1 IS NULL OR f.id IN (SELECT file_id FROM search WHERE search MATCH ?1)) AND (?2 IS NULL OR f.root_id=?2) AND (?3=0 OR a.favorite=1) AND (?4 IS NULL OR f.format=?4)";
+        let base = "FROM files f JOIN annotations a ON a.file_id=f.id WHERE (?1 IS NULL OR f.id IN (SELECT file_id FROM search WHERE search MATCH ?1)) AND (?2 IS NULL OR f.root_id=?2) AND (?3=0 OR a.favorite=1) AND (?4 IS NULL OR f.format=?4) AND (?5 IS NULL OR f.id IN (SELECT file_id FROM collection_items WHERE collection_id=?5)) AND (?6 IS NULL OR a.rating>=?6)";
         let matched = conn.query_row(
             &format!("SELECT COUNT(*) {base}"),
-            params![search, query.root_id, query.favorites, query.format],
+            params![
+                search,
+                query.root_id,
+                query.favorites,
+                query.format,
+                query.collection_id,
+                query.min_rating
+            ],
             |r| r.get(0),
         )?;
-        let sql = format!("SELECT f.id,f.root_id,f.name,f.relative_path,f.size,f.format,f.codec,f.duration,f.sample_rate,f.channels,f.bit_depth,f.status,f.error,a.favorite,a.tags,a.notes {base} AND (?5 IS NULL OR (f.name,f.id)>(?5,?6)) ORDER BY f.name,f.id LIMIT 101");
+        let sql = format!("SELECT f.id,f.root_id,f.name,f.relative_path,f.size,f.format,f.codec,f.duration,f.sample_rate,f.channels,f.bit_depth,f.status,f.error,a.favorite,a.tags,a.notes,a.rating,a.status {base} AND (?7 IS NULL OR (f.name,f.id)>(?7,?8)) ORDER BY f.name,f.id LIMIT 101");
         let mut files = conn
             .prepare(&sql)?
             .query_map(
@@ -348,6 +409,8 @@ impl Catalog {
                     query.root_id,
                     query.favorites,
                     query.format,
+                    query.collection_id,
+                    query.min_rating,
                     query.after.as_ref().map(|x| &x.name),
                     query.after.as_ref().map(|x| &x.id)
                 ],
@@ -369,6 +432,8 @@ impl Catalog {
                         favorite: r.get(13)?,
                         tags: serde_json::from_str(&r.get::<_, String>(14)?).unwrap_or_default(),
                         notes: r.get(15)?,
+                        rating: r.get(16)?,
+                        user_status: r.get(17)?,
                     })
                 },
             )?
@@ -390,6 +455,8 @@ impl Catalog {
         Ok(Library {
             roots,
             files,
+            collections,
+            smart_queries,
             total,
             favorites,
             matched,
@@ -400,6 +467,9 @@ impl Catalog {
     pub fn annotate(&self, id: &str, mut annotation: Annotation) -> Result<()> {
         if annotation.notes.len() > 20000 || annotation.tags.len() > 100 {
             return Err("Las anotaciones superan el tamaño permitido".into());
+        }
+        if annotation.rating > 5 {
+            return Err("La valoración debe estar entre 0 y 5".into());
         }
         annotation.tags = annotation
             .tags
@@ -412,14 +482,21 @@ impl Catalog {
         }
         annotation.tags.sort();
         annotation.tags.dedup();
+        let status = if annotation.status.trim().is_empty() {
+            "pending".to_string()
+        } else {
+            annotation.status.trim().to_string()
+        };
         let mut conn = self.connect()?;
         let tx = conn.transaction()?;
         let count = tx.execute(
-            "UPDATE annotations SET favorite=?1,tags=?2,notes=?3 WHERE file_id=?4",
+            "UPDATE annotations SET favorite=?1,tags=?2,notes=?3,rating=?4,status=?5 WHERE file_id=?6",
             params![
                 annotation.favorite,
                 serde_json::to_string(&annotation.tags)?,
                 annotation.notes,
+                annotation.rating,
+                status,
                 id
             ],
         )?;
@@ -428,6 +505,199 @@ impl Catalog {
         }
         refresh_search(&tx, id)?;
         tx.commit()?;
+        Ok(())
+    }
+    fn list_collections_with_conn(&self, conn: &Connection) -> Result<Vec<Collection>> {
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.name, c.color, COUNT(ci.file_id), c.created_at, c.updated_at \
+             FROM collections c \
+             LEFT JOIN collection_items ci ON ci.collection_id = c.id \
+             GROUP BY c.id \
+             ORDER BY c.name COLLATE NOCASE ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(Collection {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                color: r.get(2)?,
+                count: r.get(3)?,
+                created_at: r.get(4)?,
+                updated_at: r.get(5)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+    pub fn list_collections(&self) -> Result<Vec<Collection>> {
+        let conn = self.connect()?;
+        self.list_collections_with_conn(&conn)
+    }
+    pub fn create_collection(&self, name: &str, color: Option<&str>) -> Result<Collection> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("El nombre de la colección no puede estar vacío".into());
+        }
+        if name.len() > 100 {
+            return Err("El nombre de la colección no puede exceder 100 caracteres".into());
+        }
+        let id = Uuid::new_v4().to_string();
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT INTO collections (id, name, color) VALUES (?1, ?2, ?3)",
+            params![id, name, color],
+        )?;
+        let (created_at, updated_at): (String, String) = conn.query_row(
+            "SELECT created_at, updated_at FROM collections WHERE id=?1",
+            [&id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok(Collection {
+            id,
+            name: name.to_string(),
+            color: color.map(|s| s.to_string()),
+            count: 0,
+            created_at,
+            updated_at,
+        })
+    }
+    pub fn rename_collection(&self, id: &str, name: &str, color: Option<&str>) -> Result<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("El nombre de la colección no puede estar vacío".into());
+        }
+        if name.len() > 100 {
+            return Err("El nombre de la colección no puede exceder 100 caracteres".into());
+        }
+        let conn = self.connect()?;
+        let count = conn.execute(
+            "UPDATE collections SET name=?1, color=COALESCE(?2, color), updated_at=CURRENT_TIMESTAMP WHERE id=?3",
+            params![name, color, id],
+        )?;
+        if count == 0 {
+            return Err("Colección no encontrada".into());
+        }
+        Ok(())
+    }
+    pub fn delete_collection(&self, id: &str) -> Result<()> {
+        let conn = self.connect()?;
+        let count = conn.execute("DELETE FROM collections WHERE id=?1", [id])?;
+        if count == 0 {
+            return Err("Colección no encontrada".into());
+        }
+        Ok(())
+    }
+    pub fn add_to_collection(&self, collection_id: &str, file_ids: &[String]) -> Result<usize> {
+        if file_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.connect()?;
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM collections WHERE id=?1",
+                [collection_id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if !exists {
+            return Err("Colección no encontrada".into());
+        }
+        let tx = conn.transaction()?;
+        let mut added = 0;
+        let mut next_pos: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM collection_items WHERE collection_id=?1",
+            [collection_id],
+            |r| r.get(0),
+        )?;
+        for file_id in file_ids {
+            let inserted = tx.execute(
+                "INSERT OR IGNORE INTO collection_items (collection_id, file_id, position) VALUES (?1, ?2, ?3)",
+                params![collection_id, file_id, next_pos],
+            )?;
+            if inserted > 0 {
+                added += 1;
+                next_pos += 1;
+            }
+        }
+        tx.execute(
+            "UPDATE collections SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+            [collection_id],
+        )?;
+        tx.commit()?;
+        Ok(added)
+    }
+    pub fn remove_from_collection(&self, collection_id: &str, file_ids: &[String]) -> Result<()> {
+        if file_ids.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.connect()?;
+        let tx = conn.transaction()?;
+        for file_id in file_ids {
+            tx.execute(
+                "DELETE FROM collection_items WHERE collection_id=?1 AND file_id=?2",
+                params![collection_id, file_id],
+            )?;
+        }
+        tx.execute(
+            "UPDATE collections SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+            [collection_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+    fn list_smart_queries_with_conn(&self, conn: &Connection) -> Result<Vec<SmartQuery>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, filter_json, created_at FROM smart_queries ORDER BY name COLLATE NOCASE ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(SmartQuery {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                filter_json: r.get(2)?,
+                created_at: r.get(3)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+    pub fn list_smart_queries(&self) -> Result<Vec<SmartQuery>> {
+        let conn = self.connect()?;
+        self.list_smart_queries_with_conn(&conn)
+    }
+    pub fn save_smart_query(&self, name: &str, filter_json: &str) -> Result<SmartQuery> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("El nombre del filtro no puede estar vacío".into());
+        }
+        if name.len() > 100 {
+            return Err("El nombre del filtro no puede exceder 100 caracteres".into());
+        }
+        let _parsed: serde_json::Value = serde_json::from_str(filter_json)
+            .map_err(|_| "El filtro guardado debe ser un JSON válido")?;
+        let id = Uuid::new_v4().to_string();
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT INTO smart_queries (id, name, filter_json) VALUES (?1, ?2, ?3)",
+            params![id, name, filter_json],
+        )?;
+        let created_at: String = conn.query_row(
+            "SELECT created_at FROM smart_queries WHERE id=?1",
+            [&id],
+            |r| r.get(0),
+        )?;
+        Ok(SmartQuery {
+            id,
+            name: name.to_string(),
+            filter_json: filter_json.to_string(),
+            created_at,
+        })
+    }
+    pub fn delete_smart_query(&self, id: &str) -> Result<()> {
+        let conn = self.connect()?;
+        let count = conn.execute("DELETE FROM smart_queries WHERE id=?1", [id])?;
+        if count == 0 {
+            return Err("Filtro guardado no encontrado".into());
+        }
         Ok(())
     }
     pub fn export(&self, ids: &[String], destination: &Path) -> Result<ExportResult> {
@@ -628,6 +898,8 @@ mod tests {
                     favorite: true,
                     tags: vec!["atmósfera".into()],
                     notes: "bosque".into(),
+                    rating: 5,
+                    status: "listened".into(),
                 },
             )
             .unwrap();
@@ -641,6 +913,8 @@ mod tests {
             .unwrap();
         assert_eq!(found.files.len(), 1);
         assert!(found.files[0].favorite);
+        assert_eq!(found.files[0].rating, 5);
+        assert_eq!(found.files[0].user_status, "listened");
         catalog
             .scan(&root_id, &AtomicBool::new(false), |_| {})
             .unwrap();
@@ -712,5 +986,133 @@ mod tests {
                 ..Default::default()
             })
             .is_ok());
+    }
+    #[test]
+    fn test_migration_v1_to_v2_and_collections_smart_queries() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = temp.path().join("v1_to_v2.sqlite");
+
+        // 1. Inicializa manualmente en v1 con 001_catalog.sql
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(include_str!("../migrations/001_catalog.sql"))
+                .unwrap();
+            let v: i64 = conn
+                .pragma_query_value(None, "user_version", |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, 1);
+            conn.execute(
+                "INSERT INTO roots (id, path, name) VALUES ('r1', '/tmp/fake', 'fake')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO files (id, root_id, relative_path, name, size, mtime, format, status) VALUES ('f1', 'r1', 'a.wav', 'a.wav', 100, '123', 'WAV', 'ready')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO annotations (file_id, favorite, tags, notes) VALUES ('f1', 1, '[\"kick\"]', 'good')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // 2. Abre con Catalog::open, aplicando migración 002
+        let catalog = Catalog::open(db.clone()).unwrap();
+        {
+            let conn = catalog.connect().unwrap();
+            let v: i64 = conn
+                .pragma_query_value(None, "user_version", |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, 2);
+        }
+
+        // 3. Verifica valores por defecto en registros migrados
+        let lib = catalog.query(Query::default()).unwrap();
+        assert_eq!(lib.files.len(), 1);
+        assert_eq!(lib.files[0].rating, 0);
+        assert_eq!(lib.files[0].user_status, "pending");
+
+        // 4. Actualiza anotación con rating y status
+        catalog
+            .annotate(
+                "f1",
+                Annotation {
+                    favorite: true,
+                    tags: vec!["kick".into(), "punchy".into()],
+                    notes: "tested".into(),
+                    rating: 4,
+                    status: "listened".into(),
+                },
+            )
+            .unwrap();
+
+        // 5. Consulta por min_rating
+        let rated_match = catalog
+            .query(Query {
+                min_rating: Some(4),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(rated_match.files.len(), 1);
+        assert_eq!(rated_match.files[0].rating, 4);
+
+        let unrated_match = catalog
+            .query(Query {
+                min_rating: Some(5),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(unrated_match.files.len(), 0);
+
+        // 6. Prueba Colecciones
+        let col = catalog
+            .create_collection("Favoritos Live", Some("#ff5500"))
+            .unwrap();
+        assert_eq!(col.name, "Favoritos Live");
+        assert_eq!(col.count, 0);
+
+        let added = catalog
+            .add_to_collection(&col.id, &["f1".to_string()])
+            .unwrap();
+        assert_eq!(added, 1);
+
+        let cols = catalog.list_collections().unwrap();
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].count, 1);
+
+        let in_col = catalog
+            .query(Query {
+                collection_id: Some(col.id.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(in_col.files.len(), 1);
+        assert_eq!(in_col.files[0].id, "f1");
+
+        // 7. Prueba Smart Queries
+        let sq = catalog
+            .save_smart_query("Kicks 4+ estrellas", r#"{"minRating":4,"text":"kick"}"#)
+            .unwrap();
+        assert_eq!(sq.name, "Kicks 4+ estrellas");
+
+        let sqs = catalog.list_smart_queries().unwrap();
+        assert_eq!(sqs.len(), 1);
+        assert_eq!(sqs[0].id, sq.id);
+
+        // 8. Quitar de colección
+        catalog
+            .remove_from_collection(&col.id, &["f1".to_string()])
+            .unwrap();
+        let cols_after = catalog.list_collections().unwrap();
+        assert_eq!(cols_after[0].count, 0);
+
+        // 9. Borrar colección y smart query
+        catalog.delete_collection(&col.id).unwrap();
+        assert_eq!(catalog.list_collections().unwrap().len(), 0);
+
+        catalog.delete_smart_query(&sq.id).unwrap();
+        assert_eq!(catalog.list_smart_queries().unwrap().len(), 0);
     }
 }

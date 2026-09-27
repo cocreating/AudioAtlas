@@ -11,6 +11,8 @@
     bytes,
     type Library,
     type AudioFile,
+    type Collection,
+    type SmartQuery,
     type Cursor,
     type Player,
     type Progress,
@@ -21,6 +23,8 @@
   let data = $state<Library>({
     roots: [],
     files: [],
+    collections: [],
+    smartQueries: [],
     total: 0,
     favorites: 0,
     matched: 0,
@@ -29,9 +33,11 @@
   });
   let search = $state('');
   let searchInput: HTMLInputElement;
-  let view = $state<'all' | 'favorites' | 'tray'>('all');
+  let view = $state<'all' | 'favorites' | 'tray' | 'collection'>('all');
   let rootId = $state<string | null>(null);
+  let activeCollectionId = $state<string | null>(null);
   let format = $state('');
+  let minRating = $state(0);
   let selected = $state<AudioFile | null>(null);
   let playingFile = $state<AudioFile | null>(null);
   let player = $state<Player>({
@@ -52,15 +58,30 @@
   let notice = $state('');
   let tags = $state('');
   let notes = $state('');
+  let rating = $state(0);
   let progress = $state<Progress | null>(null);
   let cursor = $state<Cursor | null>(null);
   let history = $state<(Cursor | null)[]>([]);
   let request = 0;
   let timer: ReturnType<typeof setTimeout>;
   let polling = false;
+
+  // Estados de interfaz para Colecciones y Smart Queries
+  let creatingCollection = $state(false);
+  let newCollectionName = $state('');
+  let selectedCollectionToAdd = $state('');
+  let savingQuery = $state(false);
+  let newQueryName = $state('');
+
+  function focusOnMount(node: HTMLElement) {
+    node.focus();
+  }
+
   const dirty = $derived(
     selected !== null &&
-      (tags !== selected.tags.join(', ') || notes !== selected.notes)
+      (tags !== selected.tags.join(', ') ||
+        notes !== selected.notes ||
+        rating !== selected.rating)
   );
   const files = $derived(
     view === 'tray'
@@ -69,7 +90,8 @@
             `${f.name} ${f.tags.join(' ')} ${f.notes}`
               .toLowerCase()
               .includes(search.toLowerCase()) &&
-            (!format || f.format === format)
+            (!format || f.format === format) &&
+            (!minRating || f.rating >= minRating)
         )
       : data.files
   );
@@ -78,7 +100,11 @@
       ? 'Tus favoritos'
       : view === 'tray'
         ? 'Bandeja de sesión'
-        : (data.roots.find((r) => r.id === rootId)?.name ?? 'Todos los sonidos')
+        : view === 'collection'
+          ? (data.collections.find((c) => c.id === activeCollectionId)?.name ??
+            'Colección')
+          : (data.roots.find((r) => r.id === rootId)?.name ??
+            'Todos los sonidos')
   );
 
   async function refresh(after: Cursor | null = cursor) {
@@ -88,12 +114,23 @@
     try {
       const result = await api.library({
         text: search,
-        rootId,
+        rootId: view === 'collection' ? null : rootId,
         favorites: view === 'favorites',
         format: format || null,
+        collectionId: view === 'collection' ? activeCollectionId : null,
+        minRating: minRating > 0 ? minRating : null,
         after
       });
-      if (token === request) data = result;
+      if (token === request) {
+        data = result;
+        if (selected) {
+          const current = result.files.find((f) => f.id === selected?.id);
+          if (current && !dirty) {
+            selected = current;
+            rating = current.rating;
+          }
+        }
+      }
     } catch (e) {
       if (token === request) error = String(e);
     } finally {
@@ -106,9 +143,14 @@
     history = [];
     timer = setTimeout(() => void refresh(), 180);
   }
-  function navigate(next: typeof view, root: string | null = null) {
+  function navigate(
+    next: typeof view,
+    root: string | null = null,
+    collectionId: string | null = null
+  ) {
     view = next;
     rootId = root;
+    activeCollectionId = collectionId;
     cursor = null;
     history = [];
     void refresh();
@@ -127,6 +169,7 @@
       const id = await api.chooseRoot();
       if (id) {
         rootId = id;
+        activeCollectionId = null;
         view = 'all';
         cursor = null;
         history = [];
@@ -144,6 +187,7 @@
     selected = file;
     tags = file.tags.join(', ');
     notes = file.notes;
+    rating = file.rating;
   }
   async function save(favorite = selected?.favorite ?? false) {
     if (!selected || saving) return;
@@ -155,15 +199,18 @@
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean),
-      notes
+      notes,
+      rating,
+      status: file.userStatus
     };
     await run(async () => {
       await api.annotate(file.id, annotation);
-      const updated = { ...file, ...annotation };
+      const updated = { ...file, ...annotation, userStatus: file.userStatus };
       if (selected?.id === file.id) {
         selected = updated;
         tags = updated.tags.join(', ');
         notes = updated.notes;
+        rating = updated.rating;
       }
       tray = tray.map((f) => (f.id === file.id ? updated : f));
       notice = 'Anotaciones guardadas en tu catálogo.';
@@ -171,10 +218,107 @@
     });
     saving = false;
   }
+  async function setRating(stars: number) {
+    if (!selected) return;
+    rating = rating === stars ? 0 : stars;
+    await save();
+  }
+  async function createCollection() {
+    const name = newCollectionName.trim();
+    if (!name) return;
+    await run(async () => {
+      const col = await api.createCollection(name);
+      newCollectionName = '';
+      creatingCollection = false;
+      notice = `Colección "${col.name}" creada.`;
+      await refresh();
+      navigate('collection', null, col.id);
+    });
+  }
+  async function deleteCollection(id: string, name: string) {
+    if (
+      !confirm(
+        `¿Eliminar la colección "${name}"? Los archivos de audio no se borrarán.`
+      )
+    )
+      return;
+    await run(async () => {
+      await api.deleteCollection(id);
+      notice = 'Colección eliminada.';
+      if (activeCollectionId === id) {
+        navigate('all');
+      } else {
+        await refresh();
+      }
+    });
+  }
+  async function addSelectedToCollection() {
+    if (!selected || !selectedCollectionToAdd) return;
+    const targetCol = data.collections.find(
+      (c) => c.id === selectedCollectionToAdd
+    );
+    await run(async () => {
+      await api.addToCollection(selectedCollectionToAdd, [selected!.id]);
+      notice = `Sonido añadido a "${targetCol?.name ?? 'la colección'}".`;
+      selectedCollectionToAdd = '';
+      await refresh();
+    });
+  }
+  async function removeSelectedFromCurrentCollection(fileId: string) {
+    if (!activeCollectionId) return;
+    await run(async () => {
+      await api.removeFromCollection(activeCollectionId!, [fileId]);
+      notice = 'Sonido quitado de la colección.';
+      await refresh();
+    });
+  }
+  async function saveCurrentQuery() {
+    const name = newQueryName.trim();
+    if (!name) return;
+    const filter = {
+      text: search,
+      format: format || null,
+      minRating: minRating > 0 ? minRating : null,
+      rootId: view === 'collection' ? null : rootId
+    };
+    await run(async () => {
+      await api.saveSmartQuery(name, JSON.stringify(filter));
+      newQueryName = '';
+      savingQuery = false;
+      notice = `Filtro "${name}" guardado.`;
+      await refresh();
+    });
+  }
+  function applySmartQuery(sq: SmartQuery) {
+    try {
+      const filter = JSON.parse(sq.filterJson);
+      search = filter.text ?? '';
+      format = filter.format ?? '';
+      minRating = filter.minRating ?? 0;
+      rootId = filter.rootId ?? null;
+      activeCollectionId = null;
+      view = 'all';
+      cursor = null;
+      history = [];
+      notice = `Filtro "${sq.name}" aplicado.`;
+      void refresh();
+    } catch {
+      error = 'No se pudo aplicar la consulta guardada.';
+    }
+  }
+  async function deleteSmartQuery(id: string, name: string) {
+    if (!confirm(`¿Eliminar la consulta guardada "${name}"?`)) return;
+    await run(async () => {
+      await api.deleteSmartQuery(id);
+      notice = 'Consulta eliminada.';
+      await refresh();
+    });
+  }
   function discard() {
     if (selected) {
       tags = selected.tags.join(', ');
       notes = selected.notes;
+      rating = selected.rating;
       error = '';
     }
   }
@@ -368,6 +512,108 @@
         ></button
       >
     </nav>
+
+    <div class="section-heading">
+      <p class="nav-label">COLECCIONES</p>
+      <button
+        class="icon-button"
+        aria-label="Nueva colección"
+        title="Crear nueva colección"
+        onclick={() => (creatingCollection = !creatingCollection)}
+        disabled={!desktop || busy}><Icon name="plus" size={15} /></button
+      >
+    </div>
+    {#if creatingCollection}
+      <form
+        class="inline-create-box"
+        onsubmit={(e) => {
+          e.preventDefault();
+          void createCollection();
+        }}
+      >
+        <input
+          bind:value={newCollectionName}
+          placeholder="Nombre de la colección…"
+          use:focusOnMount
+        />
+        <div class="inline-create-actions">
+          <button
+            type="button"
+            class="text-button"
+            onclick={() => {
+              creatingCollection = false;
+              newCollectionName = '';
+            }}>Cancelar</button
+          >
+          <button
+            type="submit"
+            class="primary"
+            disabled={!newCollectionName.trim()}>Crear</button
+          >
+        </div>
+      </form>
+    {/if}
+    <nav class="collections" aria-label="Colecciones de usuario">
+      {#each data.collections as col (col.id)}
+        <div class="sidebar-item-row">
+          <button
+            class:active={view === 'collection' &&
+              activeCollectionId === col.id}
+            onclick={() => navigate('collection', null, col.id)}
+            title={col.name}
+          >
+            <Icon name="tag" size={16} /><span class="source-name"
+              >{col.name}</span
+            ><span class="nav-count">{col.count}</span>
+          </button>
+          <button
+            class="icon-button item-del-btn"
+            title="Eliminar colección"
+            aria-label="Eliminar colección"
+            onclick={(e) => {
+              e.stopPropagation();
+              void deleteCollection(col.id, col.name);
+            }}
+          >
+            <Icon name="trash" size={13} />
+          </button>
+        </div>
+      {:else}
+        <p class="source-hint">Organiza listas personalizadas de sonidos.</p>
+      {/each}
+    </nav>
+
+    {#if data.smartQueries.length}
+      <div class="section-heading">
+        <p class="nav-label">CONSULTAS GUARDADAS</p>
+      </div>
+      <nav class="smart-queries" aria-label="Consultas guardadas">
+        {#each data.smartQueries as sq (sq.id)}
+          <div class="sidebar-item-row">
+            <button
+              onclick={() => applySmartQuery(sq)}
+              title="Aplicar consulta guardada"
+            >
+              <Icon name="bookmark" size={15} /><span class="query-name"
+                >{sq.name}</span
+              >
+            </button>
+            <button
+              class="icon-button item-del-btn"
+              title="Eliminar consulta"
+              aria-label="Eliminar consulta"
+              onclick={(e) => {
+                e.stopPropagation();
+                void deleteSmartQuery(sq.id, sq.name);
+              }}
+            >
+              <Icon name="trash" size={13} />
+            </button>
+          </div>
+        {/each}
+      </nav>
+    {/if}
+
     <div class="section-heading">
       <p class="nav-label">TUS FUENTES</p>
       <button
@@ -466,7 +712,31 @@
         >{#each ['WAV', 'AIFF', 'AIF', 'FLAC', 'MP3', 'M4A', 'AAC', 'OGG'] as item (item)}<option
             >{item}</option
           >{/each}</select
-      >{#if rootId}<button
+      >
+      <label class="visually-hidden" for="rating-filter"
+        >Filtrar por valoración</label
+      ><select
+        id="rating-filter"
+        bind:value={minRating}
+        onchange={searchChanged}
+      >
+        <option value={0}>Cualquier puntuación</option>
+        <option value={5}>★★★★★ (5 estrellas)</option>
+        <option value={4}>★★★★☆ (4+ estrellas)</option>
+        <option value={3}>★★★☆☆ (3+ estrellas)</option>
+        <option value={2}>★★☆☆☆ (2+ estrellas)</option>
+        <option value={1}>★☆☆☆☆ (1+ estrella)</option>
+      </select>
+      {#if search || format || minRating > 0}
+        <button
+          class="secondary save-query-btn"
+          title="Guardar esta búsqueda como consulta inteligente"
+          onclick={() => (savingQuery = !savingQuery)}
+        >
+          <Icon name="bookmark" size={14} />Guardar búsqueda
+        </button>
+      {/if}
+      {#if rootId}<button
           class="icon-button refresh"
           title="Volver a escanear esta fuente"
           aria-label="Volver a escanear esta fuente"
@@ -478,6 +748,35 @@
             })}><Icon name="refresh" /></button
         >{/if}
     </div>
+    {#if savingQuery}
+      <form
+        class="inline-create-box"
+        style="margin: -8px 0 16px 0;"
+        onsubmit={(e) => {
+          e.preventDefault();
+          void saveCurrentQuery();
+        }}
+      >
+        <input
+          bind:value={newQueryName}
+          placeholder="Nombre del filtro guardado…"
+          use:focusOnMount
+        />
+        <div class="inline-create-actions">
+          <button
+            type="button"
+            class="text-button"
+            onclick={() => {
+              savingQuery = false;
+              newQueryName = '';
+            }}>Cancelar</button
+          >
+          <button type="submit" class="primary" disabled={!newQueryName.trim()}
+            >Guardar filtro</button
+          >
+        </div>
+      </form>
+    {/if}
     {#if error}<div class="message error" role="alert">
         <span>{error}</span><button
           class="icon-button"
@@ -538,7 +837,12 @@
                               : 'file'}
                           /></span
                         ><span
-                          ><strong>{file.name}</strong><small
+                          ><strong>{file.name}</strong
+                          >{#if file.rating > 0}<span
+                              class="rating-badge"
+                              title="{file.rating} estrellas"
+                              >{'★'.repeat(file.rating)}</span
+                            >{/if}<small
                             >{file.status !== 'ready'
                               ? ({
                                   offline: 'Fuente desconectada',
@@ -622,24 +926,28 @@
                 : 'TODO EMPIEZA CON UN SONIDO'}
             </p>
             <h2>
-              {search || format
+              {search || format || minRating
                 ? 'No encontramos coincidencias'
                 : view === 'favorites'
                   ? 'Los sonidos que quieras volver a escuchar'
                   : view === 'tray'
                     ? 'Prepara tu próxima sesión'
-                    : 'Tu universo sonoro, en un solo lugar.'}
+                    : view === 'collection'
+                      ? 'Colección vacía'
+                      : 'Tu universo sonoro, en un solo lugar.'}
             </h2>
             <p>
-              {search || format
+              {search || format || minRating
                 ? 'Prueba otra búsqueda o cambia los filtros.'
                 : view === 'favorites'
                   ? 'Marca un sonido con el corazón del inspector para guardarlo aquí.'
                   : view === 'tray'
                     ? 'Añade sonidos desde la biblioteca y exporta una selección de copias.'
-                    : 'Conecta una carpeta para explorar, escuchar y organizar tus audios, sin mover los originales.'}
+                    : view === 'collection'
+                      ? 'Añade sonidos a esta colección desde el inspector lateral.'
+                      : 'Conecta una carpeta para explorar, escuchar y organizar tus audios, sin mover los originales.'}
             </p>
-            {#if !search && !format && view === 'all'}<button
+            {#if !search && !format && !minRating && view === 'all'}<button
                 class="primary"
                 onclick={addFolder}
                 disabled={!desktop || busy || data.scanning}
@@ -648,11 +956,12 @@
                 >WAV · AIFF · FLAC · MP3 · M4A · AAC · OGG*</span
               ><small class="compatibility"
                 >* Compatibilidad según el códec del archivo.</small
-              >{:else if search || format}<button
+              >{:else if search || format || minRating}<button
                 class="secondary"
                 onclick={() => {
                   search = '';
                   format = '';
+                  minRating = 0;
                   searchChanged();
                 }}>Limpiar filtros</button
               >{/if}
@@ -683,6 +992,31 @@
               onclick={() => save(!selected!.favorite)}
               ><Icon name="heart" /></button
             >
+          </div>
+          <div class="rating-selector" role="group" aria-label="Puntuación">
+            <span class="rating-label">Puntuación</span>
+            <div class="stars">
+              {#each [1, 2, 3, 4, 5] as star}
+                <button
+                  type="button"
+                  class="star-btn"
+                  class:filled={star <= rating}
+                  aria-label="{star} estrellas"
+                  onclick={() => setRating(star)}
+                >
+                  ★
+                </button>
+              {/each}
+              {#if rating > 0}
+                <button
+                  type="button"
+                  class="text-button clear-rating"
+                  onclick={() => setRating(0)}
+                >
+                  Quitar
+                </button>
+              {/if}
+            </div>
           </div>
           <dl>
             <div>
@@ -741,6 +1075,39 @@
                 onclick={discard}>Descartar cambios</button
               >{/if}
           </form>
+          {#if data.collections.length}
+            <div class="add-to-collection-block">
+              <label for="collection-select">Colección</label>
+              <div class="collection-add-row">
+                <select
+                  id="collection-select"
+                  bind:value={selectedCollectionToAdd}
+                >
+                  <option value="">Añadir a una colección…</option>
+                  {#each data.collections as col (col.id)}
+                    <option value={col.id}>{col.name}</option>
+                  {/each}
+                </select>
+                <button
+                  type="button"
+                  class="secondary"
+                  disabled={!selectedCollectionToAdd}
+                  onclick={addSelectedToCollection}
+                >
+                  Añadir
+                </button>
+              </div>
+            </div>
+          {/if}
+          {#if view === 'collection' && activeCollectionId}
+            <button
+              type="button"
+              class="text-button remove-col-btn"
+              onclick={() => removeSelectedFromCurrentCollection(selected!.id)}
+            >
+              <Icon name="close" size={13} />Quitar de esta colección
+            </button>
+          {/if}
           <button
             class="text-button reveal"
             onclick={() => run(() => api.reveal(selected!.id))}

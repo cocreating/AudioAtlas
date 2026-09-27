@@ -1144,3 +1144,181 @@ main {
     height: 195px;
   }
 }
+
+/* Colecciones y Consultas Guardadas en la barra lateral */
+.sidebar-section {
+  margin-top: 24px;
+}
+.sidebar-item-row {
+  display: flex;
+  align-items: center;
+  position: relative;
+  gap: 2px;
+}
+.sidebar-item-row > button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar-item-row .item-del-btn {
+  opacity: 0;
+  width: 26px;
+  min-height: 26px;
+  height: 26px;
+  padding: 0;
+  color: #7e8777;
+  border-radius: 4px;
+  transition: opacity 0.15s ease;
+}
+.sidebar-item-row:hover .item-del-btn,
+.sidebar-item-row:focus-within .item-del-btn {
+  opacity: 1;
+}
+.sidebar-item-row .item-del-btn:hover {
+  color: #e58787;
+  background: #331d1d;
+}
+.inline-create-box {
+  margin: 6px 4px 10px;
+  padding: 8px;
+  background: #1c201b;
+  border: 1px solid #364032;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.inline-create-box input {
+  width: 100%;
+  font-size: 0.8rem;
+  padding: 6px 8px;
+  min-height: 30px;
+}
+.inline-create-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.inline-create-actions button {
+  min-height: 26px;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+}
+
+/* Rating / Puntuación en Inspector */
+.rating-selector {
+  margin: 16px 0;
+  padding: 12px;
+  background: #1a1e19;
+  border: 1px solid #2e3529;
+  border-radius: 6px;
+}
+.rating-label {
+  display: block;
+  font-size: 0.65rem;
+  letter-spacing: 1px;
+  color: #9aa78e;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+.stars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.star-btn {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: #495442;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  transition:
+    transform 0.1s ease,
+    color 0.15s ease;
+}
+.star-btn:hover {
+  transform: scale(1.18);
+  color: #ffd166;
+  background: transparent;
+}
+.star-btn.filled {
+  color: #ffd166;
+}
+.clear-rating {
+  font-size: 0.7rem;
+  color: #838e7a;
+  margin-left: 6px;
+}
+.clear-rating:hover {
+  color: #e7e9e5;
+}
+
+/* Indicador de rating en la tabla */
+.rating-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  color: #ffd166;
+  letter-spacing: -1px;
+  margin-left: 6px;
+}
+
+/* Añadir a colección en Inspector */
+.add-to-collection-block {
+  margin: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.add-to-collection-block label {
+  font-size: 0.68rem;
+  letter-spacing: 0.5px;
+  color: #9aa78e;
+}
+.collection-add-row {
+  display: flex;
+  gap: 6px;
+}
+.collection-add-row select {
+  flex: 1;
+  font-size: 0.8rem;
+  min-height: 32px;
+}
+.collection-add-row button {
+  min-height: 32px;
+  font-size: 0.78rem;
+  padding: 4px 10px;
+}
+.remove-col-btn {
+  margin-top: 8px;
+  color: #d18282;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.remove-col-btn:hover {
+  color: #f7aaaa;
+}
+
+/* Guardar búsqueda en Toolbar */
+.save-query-btn {
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  min-height: 36px;
+  color: #b5c7a5;
+  border-color: #384234;
+}
+.save-query-btn:hover {
+  background: #242c20;
+  border-color: #4b5845;
+}
+.query-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

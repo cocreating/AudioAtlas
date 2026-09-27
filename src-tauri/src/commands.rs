@@ -1,5 +1,5 @@
 use crate::{
-    catalog::{Annotation, ExportResult, Library, Query},
+    catalog::{Annotation, Collection, ExportResult, Library, Query, SmartQuery},
     playback::{Control, PlayerState},
     AppState,
 };
@@ -165,4 +165,92 @@ pub async fn waveform(app: AppHandle, id: String) -> Result<crate::waveform::Wav
 #[tauri::command]
 pub fn cancel_waveform(app: AppHandle) {
     app.state::<AppState>().waveforms.cancel();
+}
+
+#[tauri::command]
+pub async fn create_collection(
+    app: AppHandle,
+    name: String,
+    color: Option<String>,
+) -> Result<Collection, String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || {
+        catalog
+            .create_collection(&name, color.as_deref())
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn rename_collection(
+    app: AppHandle,
+    id: String,
+    name: String,
+    color: Option<String>,
+) -> Result<(), String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || {
+        catalog
+            .rename_collection(&id, &name, color.as_deref())
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_collection(app: AppHandle, id: String) -> Result<(), String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || catalog.delete_collection(&id).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn add_to_collection(
+    app: AppHandle,
+    collection_id: String,
+    file_ids: Vec<String>,
+) -> Result<usize, String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || {
+        catalog
+            .add_to_collection(&collection_id, &file_ids)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn remove_from_collection(
+    app: AppHandle,
+    collection_id: String,
+    file_ids: Vec<String>,
+) -> Result<(), String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || {
+        catalog
+            .remove_from_collection(&collection_id, &file_ids)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn save_smart_query(
+    app: AppHandle,
+    name: String,
+    filter_json: String,
+) -> Result<SmartQuery, String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || {
+        catalog
+            .save_smart_query(&name, &filter_json)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_smart_query(app: AppHandle, id: String) -> Result<(), String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || catalog.delete_smart_query(&id).map_err(|e| e.to_string())).await
 }

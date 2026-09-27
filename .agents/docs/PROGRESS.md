@@ -2,7 +2,29 @@
 
 Actualizado: 27 de septiembre de 2026.
 
-## Incremento 02 · waveform, loop A/B y audio desacoplado
+## Incremento 03 · Fase 1: modelo de datos consolidado, colecciones y ratings
+
+Implementado en backend y migración (Paso 1):
+
+- Migración transaccional `002_phase1.sql`: colecciones manuales ordenadas (`collections`, `collection_items` con cascade), consultas inteligentes (`smart_queries`), campos `rating` (0–5) y `status` ('pending'/'listened'/'discarded') en `annotations`, `exclusions` y `volume_uuid` en `roots`, y `contents`/`file_contents` para duplicados exactos.
+- Backend en Rust: CRUD de colecciones, adición y remoción atómica de ítems, guardado y eliminación de smart queries, filtrado por colección y por valoración mínima en `catalog.query()`.
+- Exposición de comandos IPC Tauri en `commands.rs` y registro en `lib.rs`.
+- Contrato tipado en `src/lib/api.ts` con nuevos modelos y métodos de biblioteca.
+- Pruebas automatizadas: 10 pruebas unitarias pasando, incluyendo prueba de actualización transaccional de un catálogo existente v1 a v2, comprobación de defaults, adición a colección y query filtrada por `min_rating` y `collection_id`.
+
+Implementado en UI (Paso 2):
+
+- Svelte 5 con runes exclusivos (`$state`, `$derived`, sin stores de Svelte 4):
+  - Barra lateral: sección "COLECCIONES" con creación inline mediante formulario accesible, lista con badge de recuento de sonidos y borrado; sección "CONSULTAS GUARDADAS" con presets de filtros guardados y eliminación.
+  - Barra de herramientas: filtro dropdown por valoración mínima (⭐ Todas, ⭐ 1+, ⭐ 2+, ⭐ 3+, ⭐ 4+, ⭐ 5+) y botón "Guardar búsqueda" que almacena la consulta actual con sus filtros.
+  - Lista de sonidos: insignia de estrellas en cada fila indicando la valoración asignada.
+  - Panel inspector: selector interactivo de valoración de 1 a 5 estrellas (con alternancia a 0 para borrar valoración) y selector dropdown de pertenencia a colecciones para añadir o quitar el sonido seleccionado.
+  - Estado vacío personalizado según la vista activa (colección vacía o búsqueda guardada sin resultados).
+- Typecheck (`npm run check`): 0 errores y 0 advertencias (con acción `use:focusOnMount` en inputs inline para cumplimiento a11y).
+- Formateo (`npm run format`): Prettier y `cargo fmt` ejecutados.
+- Bundle de macOS (`Audio Atlas.app`, 39,15 MiB) generado y ejecutado en el sistema para prueba local.
+
+## Incremento 02 · waveform, loop A/B y audio desacoplado (histórico)
 
 Implementado y retomado tras el corte de la sesión:
 

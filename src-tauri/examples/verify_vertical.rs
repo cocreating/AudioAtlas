@@ -31,6 +31,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             favorite: true,
             tags: vec!["verificación".into()],
             notes: "Prueba de persistencia".into(),
+            rating: 4,
+            status: "listened".into(),
         },
     )?;
     let export = catalog.export(std::slice::from_ref(&long.id), temp.path())?;
@@ -38,15 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     assert_eq!(hash_file(&path)?, hash);
     drop(catalog);
     let reopened = Catalog::open(database)?;
-    assert_eq!(
-        reopened
-            .query(Query {
-                text: "verificacion".into(),
-                ..Default::default()
-            })?
-            .matched,
-        1
-    );
+    let reopened_lib = reopened.query(Query {
+        text: "verificacion".into(),
+        ..Default::default()
+    })?;
+    assert_eq!(reopened_lib.matched, 1);
+    assert_eq!(reopened_lib.files[0].rating, 4);
+    assert_eq!(reopened_lib.files[0].user_status, "listened");
     println!("Catalog: {} files; {} decoder errors isolated; annotations survive reopen; export SHA-256 verified; source unchanged",report.indexed,report.errors);
     let waves = Waveforms::new(temp.path().join("waveforms"));
     let waveform = waves.get(&path, waves.begin())?;

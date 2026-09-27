@@ -43,7 +43,14 @@ pub fn run() {
             commands::export_files,
             commands::reveal,
             commands::waveform,
-            commands::cancel_waveform
+            commands::cancel_waveform,
+            commands::create_collection,
+            commands::rename_collection,
+            commands::delete_collection,
+            commands::add_to_collection,
+            commands::remove_from_collection,
+            commands::save_smart_query,
+            commands::delete_smart_query
         ])
         .run(tauri::generate_context!())
         .expect("No se pudo iniciar Audio Atlas");
