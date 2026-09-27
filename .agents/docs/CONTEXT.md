@@ -72,6 +72,6 @@ SQLite usa WAL: no respaldar sólo el archivo principal mientras la app está ab
 
 ## Control de versiones
 
-Repositorio Git local inicializado en `main`. El primer commit reúne la vertical y su documentación. No se ha configurado remoto ni publicado en un servicio externo.
+Repositorio Git local inicializado en `main`. Repositorio remoto configurado en `origin` (https://github.com/cocreating/AudioAtlas).
 
 Versionar código, documentación, migraciones, iconos y los dos lockfiles. Excluir dependencias instaladas, builds, target, esquemas generados, fixtures de audio regenerables, artefactos locales, logs, variables privadas y bases de datos. El generador de fixtures sí se versiona.

@@ -68,7 +68,7 @@ La última compilación incluye el ajuste para mantener bandeja y reproductor vi
 5. Continuar con colecciones, duplicados, backup/restauración y arrastre nativo probado en Live. Medir rendimiento antes de aceptar fase 1.
 
 ## Preparación de commits
-
-Repositorio local creado en `main`, usando la identidad Git ya configurada. El commit inicial `d531b40` corresponde a la primera vertical (incremento 01). El incremento 02 se consolida en este commit con waveform real multinivel, loop A/B y decodificación desacoplada en worker FIFO.
-
+ 
+Repositorio local en `main` sincronizado con su remoto en `https://github.com/cocreating/AudioAtlas`. El commit inicial `d531b40` corresponde a la primera vertical (incremento 01) y el commit `7749b7a` consolida el incremento 02 con waveform real multinivel, loop A/B y decodificación desacoplada en worker FIFO.
+ 
 El detalle técnico y la matriz completa se mantienen en [docs/STATUS.md](../../docs/STATUS.md) y [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md). La [propuesta original](Audio-Atlas-propuesta-y-prompt-tecnico.md) sigue siendo la referencia de alcance.
