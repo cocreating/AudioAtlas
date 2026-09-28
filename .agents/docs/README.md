@@ -11,7 +11,7 @@ Leer en este orden al retomar el proyecto:
 Referencias de detalle:
 
 - [Guía de desarrollo y uso](../../README.md).
-- [Arquitectura del incremento 04](../../docs/ARCHITECTURE.md).
+- [Arquitectura del incremento 05](../../docs/ARCHITECTURE.md).
 - [Matriz de funciones y validación](../../docs/STATUS.md).
 - [Dependencias y distribución](../../docs/DEPENDENCIES.md).
 

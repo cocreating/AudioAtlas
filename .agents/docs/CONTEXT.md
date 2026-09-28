@@ -6,7 +6,7 @@ Actualizado: 28 de septiembre de 2026.
 
 Audio Atlas es una aplicación de escritorio local para catalogar, buscar, escuchar, etiquetar y reunir audios para composición y trabajo con Ableton Live. Indexa archivos donde están y guarda organización virtual en su catálogo. No mueve ni modifica originales.
 
-La implementación actual es el incremento 04: vertical ejecutable con waveform, loop A/B, colecciones, consultas guardadas, valoraciones y detección de duplicados exactos. La fase 1 completa de la propuesta todavía no está aceptada. No ampliar a análisis musical, IA, similitud, Link ni automatización del DAW antes de completar y verificar los fundamentos.
+La implementación actual es el incremento 05: vertical ejecutable con waveform, loop A/B, colecciones, consultas guardadas, valoraciones, duplicados exactos reconciliados y respaldo/restauración del catálogo. La fase 1 completa de la propuesta todavía no está aceptada. No ampliar a análisis musical, IA, similitud, Link ni automatización del DAW antes de completar y verificar los fundamentos.
 
 ## Preferencias y decisiones vigentes
 
@@ -46,7 +46,8 @@ La implementación actual es el incremento 04: vertical ejecutable con waveform,
 - Anotaciones sólo en SQLite. No escribir en audio, archivos .asd o .als.
 - Exportar copias originales a una carpeta duradera elegida por el usuario; temporales propios, verificación SHA-256 y publicación sin sobrescritura. Los errores de lote pueden dejar copias parciales verificadas y un informe.
 - No fingir BPM, tonalidad, similitud ni arrastre nativo. La forma de onda está implementada bajo demanda. La columna Formato usa la extensión y el inspector muestra además el códec detectado.
-- El hash de duplicados debe invalidarse al cambiar o desaparecer el archivo. La implementación actual aún no lo hace: priorizar la corrección y las pruebas antes de usar el resumen como inventario definitivo.
+- El reescaneo invalida vínculos de hash al cambiar o desaparecer el archivo. Reanalizar descarta los vínculos obsoletos; para calcular el hash nuevo hace falta reescanear la fuente.
+- El respaldo SQLite contiene organización y rutas, no audios. La restauración se prepara en un archivo pendiente y se aplica al siguiente arranque tras guardar copia de recuperación del catálogo anterior. No probar el flujo destructivo con el catálogo principal del usuario.
 - No declarar una prueba silenciosa como escucha validada, ni un bundle local como distribución notarizada.
 
 ## Desarrollo y comprobaciones

@@ -2,11 +2,18 @@
 
 Actualizado: 28 de septiembre de 2026.
 
-## Revisión de continuidad · 28 de septiembre
+## Incremento 05 · consistencia de duplicados y respaldo del catálogo
+
+- Se invalida `file_contents` cuando cambia el tamaño/mtime del audio o desaparece en un escaneo completo. El reanálisis también revisa los vínculos existentes contra el disco y evita registrar hashes si el archivo cambia durante su lectura. Se conservan IDs y anotaciones.
+- Copia del catálogo mediante la API online backup de SQLite con WAL, validación de integridad/esquema y publicación sin sobrescritura en una carpeta elegida. Restauración preparada desde archivo validado y aplicada al siguiente arranque, con copia previa de recuperación y aviso en la UI si falla. Los audios permanecen fuera del respaldo.
+- Pruebas: 13 Rust satisfactorias, incluidas cambio de contenido del mismo tamaño, desaparición/reaparición, reanálisis sin escaneo y ciclo de copia/restauración de etiquetas, valoración y colección con catálogos temporales. Svelte/TypeScript, build estático y Clippy sin errores. La UI nativa QA muestra ambos controles; el flujo de restauración no se ha aplicado al catálogo del usuario.
+- Pendiente: prueba manual completa de diálogos y restauración en QA, arrastre nativo a Live, gestión de fuentes/cola, salida de audio/fades y benchmarks.
+
+## Revisión de continuidad · 28 de septiembre (histórico)
 
 El árbol de trabajo está limpio y `main` coincide con `origin/main` en GitHub (`cocreating/AudioAtlas`, repositorio público). La revisión actual ejecutó `npm run check` (0 errores, 0 advertencias) y `cargo test` (11 pruebas satisfactorias). El usuario confirmó que probó el incremento anterior; esa confirmación no sustituye las pruebas pendientes de escucha, Live ni medición de rendimiento.
 
-**Primer riesgo funcional a corregir:** `catalog.scan()` conserva la relación en `file_contents` cuando cambia el tamaño/mtime de un archivo o este pasa a `missing`; `index_duplicates()` excluye cualquier archivo que ya tenga relación. Por tanto, el resumen y las ubicaciones de duplicados pueden quedar obsoletos después de un reescaneo. Añadir una prueba de cambio y desaparición, invalidar el vínculo de forma transaccional y volver a calcular sólo los candidatos necesarios. Revisar además archivos que dejan de ser candidatos por tamaño. Mantener intactos originales y anotaciones.
+**Riesgo identificado y corregido en el incremento 05:** el vínculo en `file_contents` quedaba obsoleto cuando un archivo cambiaba o desaparecía y el indexador no lo recalculaba. El escaneo ahora lo invalida, y el reanálisis contrasta los vínculos con el disco antes de buscar candidatos. La prueba de regresión cubre cambio de contenido, desaparición, reaparición, anotaciones intactas y reanálisis sin escaneo.
 
 Después: probar manualmente la migración y las nuevas vistas con un catálogo aislado, completar backup/restauración consistente y la gestión de fuentes/cola. Posponer el arrastre hacia Live hasta que la exportación y la persistencia estén cubiertas de extremo a extremo. El soporte de audio, el paquete distribuible y los benchmarks siguen abiertos.
 
@@ -106,17 +113,17 @@ La última compilación incluye el ajuste para mantener bandeja y reproductor vi
 - El escaneo no tiene watcher, cola persistente, timeout/cancelación dentro del decoder, exclusiones configurables, retirada de fuentes ni identidad de volumen UUID.
 - Hay paginación acotada, no tabla virtualizada ni cancelación real de SQL.
 - Faltan fades, selección/recuperación de salida, downmix multicanal y regiones persistentes. Waveform y loop temporal están implementados en el incremento 02.
-- Colecciones, consultas guardadas, rating y duplicados exactos tienen interfaz y backend; falta corregir la invalidación de hashes de duplicados. Persistencia de bandeja y backup/restauración siguen pendientes.
+- Colecciones, consultas guardadas, rating, duplicados exactos y respaldo/restauración del catálogo tienen interfaz y backend. Persistencia de bandeja sigue pendiente.
 - La exportación todavía no comprueba espacio antes del lote ni muestra progreso/cancelación.
 - La distribución de FFmpeg/ffprobe, el inventario transitivo de licencias, la firma/notarización y el arrastre nativo a Live siguen pendientes.
 
 ## Próximo trabajo recomendado
 
-1. Corregir la invalidación y el recálculo de hashes de duplicados tras cambio, desaparición y reaparición; probar los contadores y las ubicaciones.
+1. Completar prueba manual de respaldo y restauración en QA aislado, sin tocar el catálogo principal.
 2. Confirmar precisión de seek/loop en formatos comprimidos, escucha, fades y salida/dispositivos; decidir y documentar la estrategia de FFmpeg.
 3. Ampliar casos de análisis cancelado, cambios concurrentes y lectura lenta antes de aceptar los objetivos de rendimiento.
 4. Validar manualmente colecciones, consultas guardadas, rating y exportación en un catálogo aislado; añadir cola persistente, incidencias detalladas y gestión de fuentes/volúmenes.
-5. Completar backup/restauración y arrastre nativo probado en Live. Medir rendimiento antes de aceptar fase 1.
+5. Completar arrastre nativo probado en Live. Medir rendimiento antes de aceptar fase 1.
 
 ## Preparación de commits
  

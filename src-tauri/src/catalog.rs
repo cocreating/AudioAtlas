@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, MAIN_DB};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -227,6 +227,70 @@ impl Catalog {
         )?;
         Ok(id)
     }
+    /// Capture a consistent SQLite snapshot, including committed WAL data.
+    /// Audio originals are intentionally outside this catalog backup.
+    pub fn backup_to(&self, destination: &Path) -> Result<PathBuf> {
+        if !destination.is_dir() {
+            return Err("Selecciona una carpeta para el respaldo".into());
+        }
+        let mut temp = tempfile::NamedTempFile::new_in(destination)?;
+        self.connect()?.backup(MAIN_DB, temp.path(), None)?;
+        validate_catalog_snapshot(temp.path())?;
+        temp.as_file_mut().sync_all()?;
+        let path = destination.join(format!("AudioAtlas-catalog-{}.sqlite", Uuid::new_v4()));
+        temp.persist_noclobber(&path)?;
+        Ok(path)
+    }
+    /// Stage a validated, consistent snapshot for the next application launch.
+    pub fn stage_restore(source: &Path, data_dir: &Path) -> Result<()> {
+        let pending = data_dir.join("catalog-restore-pending.sqlite");
+        if pending.exists() {
+            return Err("Ya hay una restauración preparada; reinicia la aplicación".into());
+        }
+        validate_catalog_snapshot(source)?;
+        let temp = tempfile::NamedTempFile::new_in(data_dir)?;
+        Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?.backup(
+            MAIN_DB,
+            temp.path(),
+            None,
+        )?;
+        validate_catalog_snapshot(temp.path())?;
+        temp.as_file().sync_all()?;
+        temp.persist_noclobber(pending)?;
+        Ok(())
+    }
+    /// Run before opening the app's catalog. Keep a recovery snapshot of the
+    /// previous catalog because restore replaces its organization in place.
+    pub fn apply_pending_restore(data_dir: &Path) -> Result<Option<PathBuf>> {
+        let pending = data_dir.join("catalog-restore-pending.sqlite");
+        if !pending.exists() {
+            return Ok(None);
+        }
+        validate_catalog_snapshot(&pending)?;
+        let current = data_dir.join("catalog.sqlite");
+        let recovery = if current.exists() {
+            let path = data_dir.join(format!("catalog-before-restore-{}.sqlite", Uuid::new_v4()));
+            Connection::open(&current)?.backup(MAIN_DB, &path, None)?;
+            Some(path)
+        } else {
+            None
+        };
+        let applied = (|| -> Result<()> {
+            let mut destination = Connection::open(&current)?;
+            destination.restore(MAIN_DB, &pending, None::<fn(rusqlite::backup::Progress)>)?;
+            drop(destination);
+            validate_catalog_snapshot(&current)
+        })();
+        if let Err(error) = applied {
+            if let Some(previous) = &recovery {
+                let mut destination = Connection::open(&current)?;
+                destination.restore(MAIN_DB, previous, None::<fn(rusqlite::backup::Progress)>)?;
+            }
+            return Err(error);
+        }
+        fs::remove_file(pending)?;
+        Ok(recovery)
+    }
     fn root_path(&self, id: &str) -> Result<PathBuf> {
         Ok(PathBuf::from(self.connect()?.query_row(
             "SELECT path FROM roots WHERE id=?1",
@@ -323,6 +387,10 @@ impl Catalog {
                     conn.execute("UPDATE files SET status=CASE WHEN error IS NULL THEN 'ready' ELSE 'unsupported' END WHERE root_id=?1 AND relative_path=?2", params![root_id,relative])?;
                     return Ok(());
                 }
+                // The old digest no longer describes this path, even if probing fails.
+                if let Some((id, _, _)) = &previous {
+                    conn.execute("DELETE FROM file_contents WHERE file_id=?1", [id])?;
+                }
                 let metadata = probe(entry.path());
                 if stamp(entry.path())? != before {
                     return Err("El archivo cambió durante la lectura; vuelve a escanear".into());
@@ -370,9 +438,13 @@ impl Catalog {
                     Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
+            drop(stmt);
             for (id, path) in known {
                 if !root.join(path).exists() {
-                    conn.execute("UPDATE files SET status='missing' WHERE id=?1", [id])?;
+                    let tx = conn.transaction()?;
+                    tx.execute("DELETE FROM file_contents WHERE file_id=?1", [&id])?;
+                    tx.execute("UPDATE files SET status='missing' WHERE id=?1", [&id])?;
+                    tx.commit()?;
                 }
             }
             conn.execute(
@@ -380,7 +452,9 @@ impl Catalog {
                 [root_id],
             )?;
         }
-        let _ = self.index_duplicates();
+        if !report.canceled {
+            self.index_duplicates()?;
+        }
         report.done = true;
         progress(report.clone());
         Ok(report)
@@ -742,14 +816,45 @@ impl Catalog {
     }
     pub fn index_duplicates(&self) -> Result<usize> {
         let mut conn = self.connect()?;
+        // Reconcile hashes made by an earlier scan, including files changed while
+        // the application was closed or removed from an offline source.
+        let mut linked_stmt = conn.prepare(
+            "SELECT f.id,f.size,f.mtime FROM file_contents fc JOIN files f ON f.id=fc.file_id",
+        )?;
+        let linked = linked_stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let invalid = linked
+            .into_iter()
+            .filter_map(|(id, size, mtime)| {
+                let valid = self
+                    .resolve(&id)
+                    .and_then(|path| stamp(&path))
+                    .is_ok_and(|current| current == (size, mtime));
+                (!valid).then_some(id)
+            })
+            .collect::<Vec<_>>();
+        drop(linked_stmt);
+        if !invalid.is_empty() {
+            let tx = conn.transaction()?;
+            for id in invalid {
+                tx.execute("DELETE FROM file_contents WHERE file_id=?1", [id])?;
+            }
+            tx.commit()?;
+        }
         let mut stmt = conn.prepare(
-            "SELECT f.id, r.path, f.relative_path, f.size \
+            "SELECT f.id, f.size, f.mtime \
              FROM files f \
-             JOIN roots r ON r.id = f.root_id \
-             WHERE f.status != 'offline' \
+             WHERE f.status IN ('ready','unsupported') \
                AND f.size > 0 \
                AND f.size IN ( \
-                   SELECT size FROM files WHERE status != 'offline' AND size > 0 GROUP BY size HAVING COUNT(*) > 1 \
+                   SELECT size FROM files WHERE status IN ('ready','unsupported') AND size > 0 GROUP BY size HAVING COUNT(*) > 1 \
                ) \
                AND f.id NOT IN (SELECT file_id FROM file_contents)",
         )?;
@@ -757,9 +862,8 @@ impl Catalog {
             .query_map([], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(1)?,
                     r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -769,18 +873,25 @@ impl Catalog {
             return Ok(0);
         }
 
-        let tx = conn.transaction()?;
-        let mut indexed = 0;
-        for (file_id, root_path, rel_path, size) in candidates {
-            let full_path = Path::new(&root_path).join(&rel_path);
-            if !full_path.is_file() {
+        let mut hashes = Vec::new();
+        for (file_id, size, mtime) in candidates {
+            let Ok(full_path) = self.resolve(&file_id) else {
+                continue;
+            };
+            if stamp(&full_path).ok() != Some((size, mtime.clone())) {
                 continue;
             }
             let digest = match hash_file(&full_path) {
                 Ok(h) => h,
                 Err(_) => continue,
             };
-
+            if stamp(&full_path).ok() != Some((size, mtime)) {
+                continue;
+            }
+            hashes.push((file_id, digest, size));
+        }
+        let tx = conn.transaction()?;
+        for (file_id, digest, size) in &hashes {
             tx.execute(
                 "INSERT OR IGNORE INTO contents (hash, size) VALUES (?1, ?2)",
                 params![digest, size],
@@ -791,10 +902,9 @@ impl Catalog {
                  ON CONFLICT(file_id) DO UPDATE SET hash = excluded.hash",
                 params![file_id, digest],
             )?;
-            indexed += 1;
         }
         tx.commit()?;
-        Ok(indexed)
+        Ok(hashes.len())
     }
     pub fn duplicate_summary(&self) -> Result<DuplicateSummary> {
         let conn = self.connect()?;
@@ -943,6 +1053,24 @@ fn refresh_search(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("INSERT INTO search(file_id,name,path,tags,notes) SELECT f.id,f.name,f.relative_path,a.tags,a.notes FROM files f JOIN annotations a ON a.file_id=f.id WHERE f.id=?1",[id])?;
     Ok(())
 }
+fn validate_catalog_snapshot(path: &Path) -> Result<()> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let integrity: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let tables: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','view') AND name IN ('roots','files','annotations','collections','collection_items','smart_queries','contents','file_contents','search')",
+        [],
+        |r| r.get(0),
+    )?;
+    let broken_references: i64 =
+        conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+            r.get(0)
+        })?;
+    if integrity != "ok" || version != 2 || tables != 9 || broken_references != 0 {
+        return Err("El archivo no es un respaldo válido del catálogo actual".into());
+    }
+    Ok(())
+}
 fn stamp(path: &Path) -> Result<(i64, String)> {
     let m = fs::metadata(path)?;
     Ok((
@@ -1012,6 +1140,9 @@ fn probe(path: &Path) -> Result<Metadata> {
 mod tests {
     use super::*;
     fn wav(path: &Path) {
+        wav_value(path, 0);
+    }
+    fn wav_value(path: &Path, value: i16) {
         let mut w = hound::WavWriter::create(
             path,
             hound::WavSpec {
@@ -1023,7 +1154,7 @@ mod tests {
         )
         .unwrap();
         for _ in 0..44100 {
-            w.write_sample(0i16).unwrap();
+            w.write_sample(value).unwrap();
         }
         w.finalize().unwrap();
     }
@@ -1360,5 +1491,158 @@ mod tests {
         assert_eq!(snare_file.duplicate_count, 0);
         let snare_dups = catalog.get_file_duplicates(&snare_file.id).unwrap();
         assert_eq!(snare_dups.len(), 0);
+    }
+
+    #[test]
+    fn duplicate_hashes_follow_changed_missing_and_restored_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("samples");
+        fs::create_dir(&root).unwrap();
+        let first = root.join("first.wav");
+        let second = root.join("second.wav");
+        wav(&first);
+        fs::copy(&first, &second).unwrap();
+        let catalog = Catalog::open(temp.path().join("catalog.sqlite")).unwrap();
+        let root_id = catalog.add_root(&root).unwrap();
+        let scan = || {
+            catalog
+                .scan(&root_id, &AtomicBool::new(false), |_| {})
+                .unwrap()
+        };
+        scan();
+        assert_eq!(
+            catalog.duplicate_summary().unwrap().duplicate_files_count,
+            2
+        );
+        let first_id = catalog
+            .query(Query::default())
+            .unwrap()
+            .files
+            .into_iter()
+            .find(|file| file.name == "first.wav")
+            .unwrap()
+            .id;
+        catalog
+            .annotate(
+                &first_id,
+                Annotation {
+                    favorite: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        // Same byte length, different samples: the previous association must go.
+        wav_value(&second, 1);
+        catalog.index_duplicates().unwrap();
+        assert_eq!(
+            catalog.duplicate_summary().unwrap().duplicate_files_count,
+            0
+        );
+        scan();
+        assert_eq!(
+            catalog.duplicate_summary().unwrap().duplicate_files_count,
+            0
+        );
+        assert!(catalog.get_file_duplicates(&first_id).unwrap().is_empty());
+        assert!(
+            catalog
+                .query(Query::default())
+                .unwrap()
+                .files
+                .iter()
+                .find(|f| f.id == first_id)
+                .unwrap()
+                .favorite
+        );
+
+        fs::copy(&first, &second).unwrap();
+        scan();
+        assert_eq!(
+            catalog.duplicate_summary().unwrap().duplicate_files_count,
+            2
+        );
+
+        fs::remove_file(&second).unwrap();
+        scan();
+        assert_eq!(
+            catalog.duplicate_summary().unwrap().duplicate_files_count,
+            0
+        );
+        assert!(catalog.get_file_duplicates(&first_id).unwrap().is_empty());
+
+        fs::copy(&first, &second).unwrap();
+        scan();
+        assert_eq!(
+            catalog.duplicate_summary().unwrap().duplicate_files_count,
+            2
+        );
+    }
+
+    #[test]
+    fn backup_includes_committed_wal_and_can_restore_organization() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("sounds");
+        fs::create_dir(&root).unwrap();
+        let source = root.join("note.wav");
+        wav(&source);
+        let original_hash = hash_file(&source).unwrap();
+        let catalog = Catalog::open(temp.path().join("catalog.sqlite")).unwrap();
+        let root_id = catalog.add_root(&root).unwrap();
+        catalog
+            .scan(&root_id, &AtomicBool::new(false), |_| {})
+            .unwrap();
+        let id = catalog.query(Query::default()).unwrap().files[0].id.clone();
+        catalog
+            .annotate(
+                &id,
+                Annotation {
+                    favorite: true,
+                    tags: vec!["idea".into()],
+                    notes: "mantener".into(),
+                    rating: 4,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let collection = catalog.create_collection("Ideas", None).unwrap();
+        catalog
+            .add_to_collection(&collection.id, std::slice::from_ref(&id))
+            .unwrap();
+        let destination = temp.path().join("backups");
+        fs::create_dir(&destination).unwrap();
+        let backup = catalog.backup_to(&destination).unwrap();
+        let copy = Catalog::open(backup.clone()).unwrap();
+        let restored = copy.query(Query::default()).unwrap();
+        assert_eq!(restored.files.len(), 1);
+        assert_eq!(restored.files[0].tags, vec!["idea"]);
+        assert_eq!(restored.files[0].notes, "mantener");
+        assert_eq!(restored.files[0].rating, 4);
+        assert!(restored.files[0].favorite);
+        assert_eq!(restored.collections[0].count, 1);
+
+        let other_dir = temp.path().join("fresh-app");
+        fs::create_dir(&other_dir).unwrap();
+        let active = Catalog::open(other_dir.join("catalog.sqlite")).unwrap();
+        active.create_collection("Actual", None).unwrap();
+        fs::write(temp.path().join("invalid.sqlite"), "not a database").unwrap();
+        assert!(Catalog::stage_restore(&temp.path().join("invalid.sqlite"), &other_dir).is_err());
+        assert_eq!(active.list_collections().unwrap()[0].name, "Actual");
+        Catalog::stage_restore(&backup, &other_dir).unwrap();
+        assert_eq!(active.list_collections().unwrap()[0].name, "Actual");
+        let recovery = Catalog::apply_pending_restore(&other_dir).unwrap().unwrap();
+        let changed = Catalog::open(other_dir.join("catalog.sqlite")).unwrap();
+        assert_eq!(changed.list_collections().unwrap()[0].name, "Ideas");
+        assert_eq!(
+            changed.query(Query::default()).unwrap().files[0].notes,
+            "mantener"
+        );
+        let previous = Catalog::open(recovery).unwrap();
+        assert_eq!(previous.list_collections().unwrap()[0].name, "Actual");
+        assert!(!other_dir.join("catalog-restore-pending.sqlite").exists());
+        fs::write(other_dir.join("catalog-restore-pending.sqlite"), "corrupt").unwrap();
+        assert!(Catalog::apply_pending_restore(&other_dir).is_err());
+        assert_eq!(changed.list_collections().unwrap()[0].name, "Ideas");
+        assert_eq!(hash_file(&source).unwrap(), original_hash);
     }
 }

@@ -2,7 +2,7 @@
 
 ## Entrega actual
 
-Incremento 04: detección y gestión de duplicados exactos por streaming hash SHA-256, con resumen de espacio redundante, visualización en barra lateral, insignias e inspección de ubicaciones físicas para revelar en Finder. **La fase 1 completa sigue en desarrollo.**
+Incremento 05: reconciliación de duplicados tras cambios en archivos y respaldo/restauración consistente del catálogo. **La fase 1 completa sigue en desarrollo.**
 
 | Función                                                       | Estado                                                                                                                                                                                         |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -25,8 +25,8 @@ Incremento 04: detección y gestión de duplicados exactos por streaming hash SH
 | Watcher, exclusiones, retirar fuentes y volumen UUID          | Schema preparado en v2 (`exclusions`, `volume_uuid`); watcher/gestión pendiente                                                                                                                |
 | Cola persistente, pausa real, reintentos, timeout del decoder | Pendiente; cancelación entre archivos y reescaneo manual disponibles                                                                                                                           |
 | Colecciones, consultas guardadas, rating                      | Implementado en backend (migración v2) y UI (sidebar, toolbar, tabla e inspector); 11 pruebas Rust ok                                                                                          |
-| Duplicados exactos                                            | Implementado en backend (streaming SHA-256, tablas `contents`/`file_contents`) y UI (sidebar, resumen de bytes, insignias e inspector con revelar en Finder); verificado con pruebas unitarias |
-| Backup/restauración consistente                               | Pendiente                                                                                                                                                                                      |
+| Duplicados exactos                                            | Implementado; cambio, desaparición, reaparición y reanálisis verificados con prueba de regresión |
+| Backup/restauración consistente                               | Implementado con SQLite backup/restore; probado con catálogos temporales, UI nativa visible                                                                                                                                                                                      |
 | Arrastre nativo a Ableton Live                                | Pendiente de implementación y prueba; Live está instalado                                                                                                                                      |
 | Benchmarks de 100.000 registros y p95                         | Pendiente; no se declara alcanzado ningún objetivo de rendimiento                                                                                                                              |
 
@@ -38,21 +38,21 @@ Hardware/plataforma: macOS 26.6.2 (25G83), arm64. Node 25.6.0, npm 11.8.0, Rust/
 - `npm run build`: SPA estática generada correctamente.
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`: revisión sin advertencias.
 - Analizador oficial de Svelte: sin problemas en los componentes revisados; sugerencia opcional sobre `bind:this` conservado para Cmd+F.
-- `cargo test --manifest-path src-tauri/Cargo.toml`: 11 pruebas satisfactorias: detección de duplicados exactos por streaming hash SHA-256, cálculo de bytes y grupos duplicados; migración transaccional v1 a v2, CRUD y orden de colecciones, smart queries y rating/user_status; catálogo, autorización y paginación; precisión de loop WAV estéreo, seek y rangos inválidos, silencio ante FIFO vacío; picos reales, invalidación/caché corrupta/cancelación, envolvente acotada y audio corrupto.
+- `cargo test --manifest-path src-tauri/Cargo.toml`: 13 pruebas satisfactorias: duplicados exactos y cambios/desapariciones/reapariciones; respaldo y restauración con WAL, anotaciones y colecciones; migración v1 a v2; catálogo, autorización y paginación; loop WAV, seek y FIFO; picos reales, caché e invalidación, envolvente acotada y audio corrupto.
 - `cargo run --manifest-path src-tauri/Cargo.toml --example verify_vertical -- test-fixtures/sonidos --audio`: 7 archivos, incluido uno corrupto, anotaciones recuperadas tras reapertura, SHA-256 idéntico antes/después de exportar. Audio nativo iniciado, seek observado a 60,14 s, pausa/reanudación/detención correctos. Waveform de 7.938.000 frames con seis niveles y reutilización de caché. Loop nativo repetido, rechazo de fileId antiguo, seek pausado y desactivación correctos. Volumen cero: no valida calidad audible ni latencia.
 - `cargo run --manifest-path src-tauri/Cargo.toml --example verify_codecs -- test-fixtures/codecs`: las siete muestras WAV/AIFF/FLAC/MP3/M4A/AAC/OGG pasan waveform, apertura, seek e inicio de loop. Prueba de compatibilidad básica, no cobertura de todas las variantes ni exactitud de seek comprimido.
-- `npm run tauri -- build --debug --bundles app`: bundle arm64 actualizado (39,57 MiB).
+- `npm run tauri -- build --debug --bundles app`: bundle arm64 actualizado (40,06 MiB).
 - Apertura real de la app, lectura del árbol de accesibilidad y captura visual. Diálogo de carpetas operativo. El usuario seleccionó su propia fuente; la UI mostró 2.341 archivos y metadatos (migrados limpiamente a v2 conservando todas las anotaciones existentes).
 - UI del incremento 04: vista "Duplicados" en la barra lateral con recuento dinámico, barra resumen con cálculo de espacio redundante en disco, insignias en la lista de sonidos e inspección de todas las ubicaciones físicas del archivo con acción "Mostrar en Finder", preservando la inmutabilidad de los originales.
 - Auditoría npm de dependencias de ejecución: sin vulnerabilidades informadas.
 
 Las pruebas automáticas usan catálogos temporales y archivos propios. La bandeja del usuario y su catálogo no se usan para las pruebas de anotaciones/exportación. No se ha realizado una escucha humana, prueba dentro de Live, benchmark formal ni validación en un Mac limpio.
 
-El recuento de duplicados puede quedar obsoleto si el contenido cambia o desaparece después de calcular su hash; la corrección está priorizada en el siguiente incremento.
+Los hashes se invalidan al reescanear un archivo modificado o desaparecido. Reanalizar descarta vínculos cuyo archivo ya no coincide con el catálogo; requiere reescaneo de la fuente para registrar la nueva versión del archivo.
 
 ## Próximo incremento
 
-1. Corregir hashes de duplicados obsoletos cuando un archivo cambia o desaparece; verificar reescaneo y recuentos con pruebas de regresión.
-2. Validar manualmente colecciones, valoraciones, consultas y exportación con un catálogo aislado; completar backup y restauración consistente de SQLite.
-3. Añadir gestión de fuentes, exclusiones y cola persistente; después probar el arrastre nativo hacia Ableton Live y Finder.
+1. Validar manualmente el flujo completo de restauración en el paquete QA aislado y las vistas de colecciones, valoración, consultas y exportación.
+2. Añadir gestión de fuentes, exclusiones y cola persistente.
+3. Probar el arrastre nativo hacia Ableton Live y Finder.
 4. Resolver fades, selección/recuperación de salida y decisión FFmpeg; medir rendimiento antes de cerrar formalmente la fase 1.

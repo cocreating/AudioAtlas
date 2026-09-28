@@ -177,6 +177,31 @@
       console.error(e);
     }
   }
+  async function backupCatalog() {
+    busy = true;
+    await run(async () => {
+      const path = await api.backupCatalog();
+      if (path)
+        notice = `Catálogo respaldado en ${path}. Los audios originales no están incluidos.`;
+    });
+    busy = false;
+  }
+  async function restoreCatalog() {
+    if (
+      !window.confirm(
+        'Al volver a abrir Audio Atlas, el respaldo elegido sustituirá la organización actual. Se guardará una copia de recuperación del catálogo anterior. Los archivos de audio no se modificarán. ¿Continuar?'
+      )
+    )
+      return;
+    busy = true;
+    await run(async () => {
+      if (await api.prepareCatalogRestore()) {
+        notice =
+          'Restauración preparada. Cierra y vuelve a abrir Audio Atlas para aplicarla.';
+      }
+    });
+    busy = false;
+  }
   async function triggerScanDuplicates() {
     if (!desktop) return;
     scanningDuplicates = true;
@@ -484,7 +509,11 @@
         if (disposed) unlisten();
         else cleanups.push(unlisten);
       }
-      if (!disposed) await refresh();
+      if (!disposed) {
+        const restoreError = await api.startupIssue();
+        if (restoreError) error = restoreError;
+        await refresh();
+      }
     }
     void setup().catch((e) => {
       error = String(e);
@@ -700,6 +729,16 @@
       ><Icon name="plus" size={16} />Añadir carpeta</button
     >
     <div class="sidebar-bottom">
+      <button
+        class="backup-action"
+        onclick={backupCatalog}
+        disabled={!desktop || busy}>Respaldar catálogo</button
+      >
+      <button
+        class="backup-action"
+        onclick={restoreCatalog}
+        disabled={!desktop || busy}>Restaurar catálogo…</button
+      >
       <div class="privacy-icon"><Icon name="folder" /></div>
       <strong>Tu biblioteca. En tu equipo.</strong>
       <p>

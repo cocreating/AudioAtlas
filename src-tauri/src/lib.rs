@@ -13,6 +13,7 @@ pub struct AppState {
     pub waveforms: waveform::Waveforms,
     pub scanning: Arc<AtomicBool>,
     pub cancel_scan: Arc<AtomicBool>,
+    pub startup_issue: Option<String>,
 }
 
 pub fn run() {
@@ -21,6 +22,20 @@ pub fn run() {
         .setup(|app| {
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;
+            let startup_issue = match catalog::Catalog::apply_pending_restore(&directory) {
+                Ok(_) => None,
+                Err(error) => {
+                    let pending = directory.join("catalog-restore-pending.sqlite");
+                    if pending.exists() {
+                        let rejected = directory.join(format!(
+                            "catalog-restore-rejected-{}.sqlite",
+                            uuid::Uuid::new_v4()
+                        ));
+                        let _ = std::fs::rename(pending, rejected);
+                    }
+                    Some(format!("No se aplicó la restauración: {error}"))
+                }
+            };
             app.manage(AppState {
                 catalog: catalog::Catalog::open(directory.join("catalog.sqlite"))
                     .map_err(|e| std::io::Error::other(e.to_string()))?,
@@ -28,6 +43,7 @@ pub fn run() {
                 waveforms: waveform::Waveforms::new(app.path().app_cache_dir()?.join("waveforms")),
                 scanning: Arc::new(AtomicBool::new(false)),
                 cancel_scan: Arc::new(AtomicBool::new(false)),
+                startup_issue,
             });
             Ok(())
         })
@@ -41,6 +57,9 @@ pub fn run() {
             commands::transport,
             commands::player_state,
             commands::export_files,
+            commands::backup_catalog,
+            commands::prepare_catalog_restore,
+            commands::startup_issue,
             commands::reveal,
             commands::waveform,
             commands::cancel_waveform,

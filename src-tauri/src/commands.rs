@@ -130,6 +130,61 @@ pub async fn export_files(
     .await
 }
 #[tauri::command]
+pub async fn backup_catalog(app: AppHandle) -> Result<Option<String>, String> {
+    let dialog_app = app.clone();
+    let destination = blocking(move || {
+        Ok(dialog_app
+            .dialog()
+            .file()
+            .set_title("Elegir carpeta para respaldar el catálogo")
+            .blocking_pick_folder())
+    })
+    .await?;
+    let Some(destination) = destination else {
+        return Ok(None);
+    };
+    let path = destination.into_path().map_err(|e| e.to_string())?;
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || {
+        catalog
+            .backup_to(&path)
+            .map(|file| Some(file.to_string_lossy().into_owned()))
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+#[tauri::command]
+pub async fn prepare_catalog_restore(app: AppHandle) -> Result<bool, String> {
+    if app.state::<AppState>().scanning.load(Ordering::SeqCst) {
+        return Err("Espera a que termine el escaneo".into());
+    }
+    let dialog_app = app.clone();
+    let source = blocking(move || {
+        Ok(dialog_app
+            .dialog()
+            .file()
+            .set_title("Elegir respaldo del catálogo")
+            .add_filter("Catálogo SQLite", &["sqlite"])
+            .blocking_pick_file())
+    })
+    .await?;
+    let Some(source) = source else {
+        return Ok(false);
+    };
+    let path = source.into_path().map_err(|e| e.to_string())?;
+    let directory = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    blocking(move || {
+        crate::catalog::Catalog::stage_restore(&path, &directory)
+            .map(|()| true)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+#[tauri::command]
+pub fn startup_issue(app: AppHandle) -> Option<String> {
+    app.state::<AppState>().startup_issue.clone()
+}
+#[tauri::command]
 pub async fn reveal(app: AppHandle, id: String) -> Result<(), String> {
     let catalog = app.state::<AppState>().catalog.clone();
     blocking(move || {

@@ -154,6 +154,9 @@ export const api = {
   player: () => invoke<Player>('player_state'),
   export: (ids: string[]) =>
     invoke<ExportResult | null>('export_files', { ids }),
+  backupCatalog: () => invoke<string | null>('backup_catalog'),
+  prepareCatalogRestore: () => invoke<boolean>('prepare_catalog_restore'),
+  startupIssue: () => invoke<string | null>('startup_issue'),
   waveform: (id: string) => invoke<Waveform>('waveform', { id }),
   cancelWaveform: () => invoke<void>('cancel_waveform'),
   reveal: (id: string) => invoke<void>('reveal', { id }),

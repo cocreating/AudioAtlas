@@ -294,6 +294,15 @@ nav button.active > svg {
   margin-top: auto;
   padding: 50px 9px 0;
 }
+.backup-action {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 8px 10px;
+  margin-bottom: 22px;
+  border: 1px solid #424a3c;
+  color: #c3ceb8;
+  font-size: 0.76rem;
+}
 .privacy-icon {
   color: #a0b788;
   margin-bottom: 12px;

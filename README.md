@@ -1,6 +1,6 @@
 # Audio Atlas
 
-Biblioteca de audio local para macOS. Incremento 04 ejecutable de la [propuesta](.agents/docs/Audio-Atlas-propuesta-y-prompt-tecnico.md), no fase 1 completa.
+Biblioteca de audio local para macOS. Incremento 05 ejecutable de la [propuesta](.agents/docs/Audio-Atlas-propuesta-y-prompt-tecnico.md), no fase 1 completa.
 
 Para retomar el desarrollo, empieza por el [contexto y avance en `.agents/docs`](.agents/docs/README.md).
 
@@ -35,13 +35,15 @@ La aplicación de desarrollo queda en `src-tauri/target/debug/bundle/macos/Audio
 6. Añade archivos con **+** a la bandeja. **Exportar copias** crea una carpeta de sesión duradera, con SHA-256 y `manifest.json`, dentro del destino que elijas. Nunca sobrescribe archivos existentes. La bandeja es temporal y se vacía al cerrar.
 7. Cierra y abre la app: fuentes, archivos, favoritos, etiquetas y notas permanecen en SQLite. Una fuente desconectada conserva sus entradas. El botón de reescaneo aparece al seleccionar una fuente.
 
-Puedes organizar archivos en **Colecciones**, guardar búsquedas y asignarles una valoración. La vista **Duplicados** agrupa copias con el mismo SHA-256 y permite localizar cada archivo en Finder; no elimina originales. Hasta corregir la invalidación de hashes al cambiar o desaparecer un archivo, vuelve a comprobar físicamente cualquier resultado de duplicados antes de decidir qué conservar.
+Puedes organizar archivos en **Colecciones**, guardar búsquedas y asignarles una valoración. La vista **Duplicados** agrupa copias con el mismo SHA-256 y permite localizar cada archivo en Finder; no elimina originales. El reescaneo invalida hashes de archivos modificados o desaparecidos. **Reanalizar** también descarta asociaciones obsoletas; si cambió el audio, reescanea la fuente para catalogar su nueva versión antes de calcular el nuevo hash.
+
+En la parte inferior de la barra lateral, **Respaldar catálogo** crea una copia consistente de SQLite en la carpeta elegida, incluso con WAL activo. **Restaurar catálogo…** prepara un respaldo válido para aplicarlo al cerrar y volver a abrir la aplicación; antes del cambio se guarda una copia de recuperación del catálogo anterior en el directorio de datos. El respaldo contiene organización y rutas, pero no los archivos de audio.
 
 Atajos: **Cmd+F** busca; **Espacio** reproduce/pausa cuando el foco no está en un control; flechas arriba/abajo seleccionan cuando el foco está fuera de los controles. No se capturan letras ni espacio durante la edición.
 
 ## Datos y límites
 
-El catálogo está en `~/Library/Application Support/studio.audioatlas.desktop/catalog.sqlite`. La app no modifica audios ni escribe etiquetas dentro de ellos. SQLite usa WAL: no copies sólo el archivo principal con la app abierta. El backup/restauración coordinados todavía no están implementados.
+El catálogo está en `~/Library/Application Support/studio.audioatlas.desktop/catalog.sqlite`. La app no modifica audios ni escribe etiquetas dentro de ellos. SQLite usa WAL: no copies sólo el archivo principal con la app abierta. El respaldo y la restauración coordinada están implementados; la restauración requiere reiniciar la aplicación y no sustituye a una copia de los audios.
 
 Se prueban WAV reales generados localmente y un corpus propio convertido a WAV, AIFF, FLAC, MP3, M4A, AAC y OGG. Las siete muestras superaron generación de onda, apertura, seek e inicio de loop; esto no cubre todas las variantes ni garantiza precisión de loop en formatos comprimidos. Symphonia detecta el contenido y obtiene el códec; WAV, AIFF, FLAC, MP3, AAC, M4A y OGG son candidatos por extensión y dependen de los códecs admitidos. La columna **Formato** refleja la extensión; el inspector muestra además el códec detectado. La validación completa de cada combinación de contenedor y códec está pendiente. No se analiza BPM ni tonalidad.
 

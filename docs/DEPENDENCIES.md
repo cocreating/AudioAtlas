@@ -8,7 +8,7 @@ El proyecto fija las resoluciones exactas en `package-lock.json` y `src-tauri/Ca
 | Svelte / SvelteKit / adapter-static       | Interfaz SPA                               | MIT                                |
 | Vite                                      | Desarrollo y build                         | MIT                                |
 | TypeScript                                | Tipos en desarrollo                        | Apache-2.0                         |
-| rusqlite                                  | SQLite                                     | MIT                                |
+| rusqlite (`backup`)                       | SQLite y respaldo/restauración consistente | MIT                                |
 | SQLite bundled                            | Catálogo y FTS5                            | Dominio público                    |
 | Rodio 0.21.1 / CPAL                       | Preescucha nativa                          | MIT o Apache-2.0                   |
 | ringbuf 0.4.8                             | FIFO de audio entre worker y salida        | MIT o Apache-2.0                   |

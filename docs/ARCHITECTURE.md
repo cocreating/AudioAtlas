@@ -1,4 +1,4 @@
-# Arquitectura · incremento 04
+# Arquitectura · incremento 05
 
 ## Estructura
 
@@ -34,7 +34,7 @@ scripts/create-codec-fixtures.py Corpus opcional de siete formatos
 - Escaneo en un hilo dedicado con un guard para impedir escaneos simultáneos; publicación de progreso y reescaneo manual incremental por tamaño/mtime. Al finalizar el escaneo, se indexan automáticamente los candidatos a duplicados exactos.
 - Los originales se abren en lectura. Un cambio de tamaño/mtime durante la inspección invalida el resultado y se recoge como incidencia; requiere reescaneo manual. La falta de una raíz produce estado offline al consultar; no borra anotaciones.
 - Colecciones manuales y consultas inteligentes: tablas `collections`, `collection_items` (con orden y borrado en cascada) y `smart_queries` (filtros JSON guardados). Valoraciones (0–5) en SQLite asociadas al catálogo.
-- Duplicados exactos: tablas `contents` y `file_contents`. Algoritmo de dos fases (prefiltrado por tamaño común y cálculo criptográfico SHA-256 en bloques streaming de 64 KiB). Inmutabilidad estricta: los archivos jamás se borran ni modifican; se exponen sus ubicaciones físicas para revelarlas en Finder.
+- Duplicados exactos: tablas `contents` y `file_contents`. Algoritmo de dos fases (prefiltrado por tamaño común y cálculo criptográfico SHA-256 en bloques streaming de 64 KiB). Un cambio de tamaño/mtime o desaparición invalida el vínculo de hash; antes de reanalizar se comprueban los vínculos existentes y la estabilidad del archivo durante el hash. Inmutabilidad estricta: los archivos jamás se borran ni modifican; se exponen sus ubicaciones físicas para revelarlas en Finder.
 
 ## Motor de audio provisional
 
@@ -53,6 +53,12 @@ El análisis se solicita explícitamente para el archivo en preescucha y trabaja
 La caché vive en el directorio de caché de Tauri, subcarpeta `waveforms`, con versión y hash de contenido en el nombre. Los temporales se publican de forma atómica; una caché inválida se regenera. Se verifican tamaño, tiempos e inode del original durante el análisis y se conservan hasta 128 entradas propias. Cada actualización vuelve a leer el original para calcular el hash.
 
 Sólo se ejecuta un análisis pesado simultáneo; la nueva solicitud invalida la anterior. Cancelación y límite de 120 s se comprueban entre lecturas y paquetes, sin prometer interrupción inmediata de E/S bloqueada. Cambiar de archivo descarta respuestas antiguas. Las regiones de loop son temporales y no alteran archivos ni exportaciones. Aún no hay fades ni garantía de transiciones sin clics.
+
+## Respaldo y restauración
+
+`rusqlite` usa la API de backup de SQLite para crear una copia consistente del catálogo con transacciones ya confirmadas en WAL. Se genera un temporal en la carpeta elegida, se valida versión 2, esquema y `PRAGMA quick_check`, y se publica sin sobrescribir con un nombre UUID. Los audios originales no forman parte del respaldo.
+
+La restauración se prepara desde un archivo elegido mediante diálogo nativo: se verifica y se copia a `catalog-restore-pending.sqlite` dentro del directorio de datos. Al siguiente arranque, antes de abrir el catálogo, se guarda allí una copia de recuperación del catálogo actual y se aplica el respaldo mediante la API de restore de SQLite. Si falla, se intenta recuperar el catálogo previo, se aparta el archivo pendiente y la UI muestra el error de arranque. No se modifica ningún audio. La restauración nativa con el catálogo real del usuario no se ha ejecutado; el ciclo completo se probó con catálogos temporales.
 
 ## Exportación
 
