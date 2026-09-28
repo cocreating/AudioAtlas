@@ -1,6 +1,6 @@
 # Audio Atlas
 
-Biblioteca de audio local para macOS. Incremento 02 ejecutable de la [propuesta](.agents/docs/Audio-Atlas-propuesta-y-prompt-tecnico.md), no fase 1 completa.
+Biblioteca de audio local para macOS. Incremento 04 ejecutable de la [propuesta](.agents/docs/Audio-Atlas-propuesta-y-prompt-tecnico.md), no fase 1 completa.
 
 Para retomar el desarrollo, empieza por el [contexto y avance en `.agents/docs`](.agents/docs/README.md).
 
@@ -34,6 +34,8 @@ La aplicación de desarrollo queda en `src-tauri/target/debug/bundle/macos/Audio
 5. Busca por nombre, ruta relativa, etiquetas o notas. Combina fuente, favoritos y formato. Los resultados se consultan en páginas de 100 mediante cursor.
 6. Añade archivos con **+** a la bandeja. **Exportar copias** crea una carpeta de sesión duradera, con SHA-256 y `manifest.json`, dentro del destino que elijas. Nunca sobrescribe archivos existentes. La bandeja es temporal y se vacía al cerrar.
 7. Cierra y abre la app: fuentes, archivos, favoritos, etiquetas y notas permanecen en SQLite. Una fuente desconectada conserva sus entradas. El botón de reescaneo aparece al seleccionar una fuente.
+
+Puedes organizar archivos en **Colecciones**, guardar búsquedas y asignarles una valoración. La vista **Duplicados** agrupa copias con el mismo SHA-256 y permite localizar cada archivo en Finder; no elimina originales. Hasta corregir la invalidación de hashes al cambiar o desaparecer un archivo, vuelve a comprobar físicamente cualquier resultado de duplicados antes de decidir qué conservar.
 
 Atajos: **Cmd+F** busca; **Espacio** reproduce/pausa cuando el foco no está en un control; flechas arriba/abajo seleccionan cuando el foco está fuera de los controles. No se capturan letras ni espacio durante la edición.
 

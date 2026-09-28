@@ -1,6 +1,6 @@
 # Documentación de continuidad · Audio Atlas
 
-Actualizado: 27 de septiembre de 2026.
+Actualizado: 28 de septiembre de 2026.
 
 Leer en este orden al retomar el proyecto:
 
@@ -11,7 +11,7 @@ Leer en este orden al retomar el proyecto:
 Referencias de detalle:
 
 - [Guía de desarrollo y uso](../../README.md).
-- [Arquitectura del incremento 02](../../docs/ARCHITECTURE.md).
+- [Arquitectura del incremento 04](../../docs/ARCHITECTURE.md).
 - [Matriz de funciones y validación](../../docs/STATUS.md).
 - [Dependencias y distribución](../../docs/DEPENDENCIES.md).
 

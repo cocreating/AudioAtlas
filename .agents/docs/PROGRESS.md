@@ -2,6 +2,14 @@
 
 Actualizado: 28 de septiembre de 2026.
 
+## Revisión de continuidad · 28 de septiembre
+
+El árbol de trabajo está limpio y `main` coincide con `origin/main` en GitHub (`cocreating/AudioAtlas`, repositorio público). La revisión actual ejecutó `npm run check` (0 errores, 0 advertencias) y `cargo test` (11 pruebas satisfactorias). El usuario confirmó que probó el incremento anterior; esa confirmación no sustituye las pruebas pendientes de escucha, Live ni medición de rendimiento.
+
+**Primer riesgo funcional a corregir:** `catalog.scan()` conserva la relación en `file_contents` cuando cambia el tamaño/mtime de un archivo o este pasa a `missing`; `index_duplicates()` excluye cualquier archivo que ya tenga relación. Por tanto, el resumen y las ubicaciones de duplicados pueden quedar obsoletos después de un reescaneo. Añadir una prueba de cambio y desaparición, invalidar el vínculo de forma transaccional y volver a calcular sólo los candidatos necesarios. Revisar además archivos que dejan de ser candidatos por tamaño. Mantener intactos originales y anotaciones.
+
+Después: probar manualmente la migración y las nuevas vistas con un catálogo aislado, completar backup/restauración consistente y la gestión de fuentes/cola. Posponer el arrastre hacia Live hasta que la exportación y la persistencia estén cubiertas de extremo a extremo. El soporte de audio, el paquete distribuible y los benchmarks siguen abiertos.
+
 ## Incremento 04 · Fase 1: detección de duplicados exactos por streaming hash SHA-256
 
 Implementado en backend y base de datos:
@@ -98,17 +106,17 @@ La última compilación incluye el ajuste para mantener bandeja y reproductor vi
 - El escaneo no tiene watcher, cola persistente, timeout/cancelación dentro del decoder, exclusiones configurables, retirada de fuentes ni identidad de volumen UUID.
 - Hay paginación acotada, no tabla virtualizada ni cancelación real de SQL.
 - Faltan fades, selección/recuperación de salida, downmix multicanal y regiones persistentes. Waveform y loop temporal están implementados en el incremento 02.
-- Faltan colecciones, consultas guardadas, rating, persistencia de bandeja, duplicados exactos y backup/restauración.
+- Colecciones, consultas guardadas, rating y duplicados exactos tienen interfaz y backend; falta corregir la invalidación de hashes de duplicados. Persistencia de bandeja y backup/restauración siguen pendientes.
 - La exportación todavía no comprueba espacio antes del lote ni muestra progreso/cancelación.
 - La distribución de FFmpeg/ffprobe, el inventario transitivo de licencias, la firma/notarización y el arrastre nativo a Live siguen pendientes.
 
 ## Próximo trabajo recomendado
 
-1. Completar la validación manual de la vertical: escucha, seek, guardar anotaciones, reiniciar UI, recuperarlas y exportar desde la interfaz. Usar material de prueba para no alterar anotaciones del usuario.
+1. Corregir la invalidación y el recálculo de hashes de duplicados tras cambio, desaparición y reaparición; probar los contadores y las ubicaciones.
 2. Confirmar precisión de seek/loop en formatos comprimidos, escucha, fades y salida/dispositivos; decidir y documentar la estrategia de FFmpeg.
 3. Ampliar casos de análisis cancelado, cambios concurrentes y lectura lenta antes de aceptar los objetivos de rendimiento.
-4. Añadir cola persistente, incidencias detalladas y gestión de fuentes/volúmenes.
-5. Continuar con colecciones, duplicados, backup/restauración y arrastre nativo probado en Live. Medir rendimiento antes de aceptar fase 1.
+4. Validar manualmente colecciones, consultas guardadas, rating y exportación en un catálogo aislado; añadir cola persistente, incidencias detalladas y gestión de fuentes/volúmenes.
+5. Completar backup/restauración y arrastre nativo probado en Live. Medir rendimiento antes de aceptar fase 1.
 
 ## Preparación de commits
  

@@ -1,12 +1,12 @@
 # Contexto del proyecto
 
-Actualizado: 27 de septiembre de 2026.
+Actualizado: 28 de septiembre de 2026.
 
 ## Producto y alcance
 
 Audio Atlas es una aplicación de escritorio local para catalogar, buscar, escuchar, etiquetar y reunir audios para composición y trabajo con Ableton Live. Indexa archivos donde están y guarda organización virtual en su catálogo. No mueve ni modifica originales.
 
-La implementación actual es el incremento 02: vertical ejecutable con waveform real, loop A/B y decoder desacoplado de la salida. La fase 1 completa de la propuesta todavía no está aceptada. No ampliar a análisis musical, IA, similitud, Link ni automatización del DAW antes de completar y verificar los fundamentos.
+La implementación actual es el incremento 04: vertical ejecutable con waveform, loop A/B, colecciones, consultas guardadas, valoraciones y detección de duplicados exactos. La fase 1 completa de la propuesta todavía no está aceptada. No ampliar a análisis musical, IA, similitud, Link ni automatización del DAW antes de completar y verificar los fundamentos.
 
 ## Preferencias y decisiones vigentes
 
@@ -28,12 +28,13 @@ La implementación actual es el incremento 02: vertical ejecutable con waveform 
 | `src/app.css` | Diseño propio, oscuro y adaptable |
 | `src-tauri/src/lib.rs` | Arranque, registro de comandos y estado |
 | `src-tauri/src/commands.rs` | IPC, diálogos y coordinación de tareas |
-| `src-tauri/src/catalog.rs` | Persistencia, escaneo, consultas, anotaciones, exportación y pruebas |
+| `src-tauri/src/catalog.rs` | Persistencia, escaneo, consultas, colecciones, duplicados, anotaciones, exportación y pruebas |
 | `src-tauri/src/playback.rs` | Motor nativo controlado por canal de mensajes |
 | `src-tauri/src/audio_stream.rs` | Decoder dedicado, FIFO fijo y repetición A/B |
 | `src-tauri/src/waveform.rs` | Envolvente multinivel acotada, hash y caché regenerable |
 | `src-tauri/examples/verify_codecs.rs` | Compatibilidad básica del corpus de siete formatos |
 | `src-tauri/migrations/001_catalog.sql` | roots, files, annotations, FTS y exports |
+| `src-tauri/migrations/002_phase1.sql` | colecciones, consultas guardadas, valoraciones, exclusiones y hashes |
 | `src-tauri/examples/verify_vertical.rs` | Comprobación aislada del catálogo y salida de audio |
 | `scripts/create-fixtures.py` | Generación reproducible de audios propios para pruebas |
 
@@ -44,8 +45,9 @@ La implementación actual es el incremento 02: vertical ejecutable con waveform 
 - Un volumen desconectado conserva registros y anotaciones. No confundir falta de acceso con autorización para borrar datos.
 - Anotaciones sólo en SQLite. No escribir en audio, archivos .asd o .als.
 - Exportar copias originales a una carpeta duradera elegida por el usuario; temporales propios, verificación SHA-256 y publicación sin sobrescritura. Los errores de lote pueden dejar copias parciales verificadas y un informe.
-- No fingir waveform, BPM, tonalidad, similitud ni arrastre nativo. La columna Formato usa la extensión y el inspector muestra además el códec detectado.
-- No declarar una prueba silenciosa como escucha validada, una reapertura de SQLite como reinicio completo de la UI, ni un bundle local como distribución notarizada.
+- No fingir BPM, tonalidad, similitud ni arrastre nativo. La forma de onda está implementada bajo demanda. La columna Formato usa la extensión y el inspector muestra además el códec detectado.
+- El hash de duplicados debe invalidarse al cambiar o desaparecer el archivo. La implementación actual aún no lo hace: priorizar la corrección y las pruebas antes de usar el resumen como inventario definitivo.
+- No declarar una prueba silenciosa como escucha validada, ni un bundle local como distribución notarizada.
 
 ## Desarrollo y comprobaciones
 

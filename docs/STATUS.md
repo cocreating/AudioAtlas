@@ -48,9 +48,11 @@ Hardware/plataforma: macOS 26.6.2 (25G83), arm64. Node 25.6.0, npm 11.8.0, Rust/
 
 Las pruebas automáticas usan catálogos temporales y archivos propios. La bandeja del usuario y su catálogo no se usan para las pruebas de anotaciones/exportación. No se ha realizado una escucha humana, prueba dentro de Live, benchmark formal ni validación en un Mac limpio.
 
+El recuento de duplicados puede quedar obsoleto si el contenido cambia o desaparece después de calcular su hash; la corrección está priorizada en el siguiente incremento.
+
 ## Próximo incremento
 
-1. Arrastre nativo (drag-and-drop) hacia Ableton Live y Finder (con `tauri-plugin-drag`).
-2. Backup y restauración consistente de SQLite (`rusqlite::backup`).
-3. Fades, selección de salida de audio y cola persistente.
-4. Benchmarks de rendimiento antes de cerrar formalmente la Fase 1.
+1. Corregir hashes de duplicados obsoletos cuando un archivo cambia o desaparece; verificar reescaneo y recuentos con pruebas de regresión.
+2. Validar manualmente colecciones, valoraciones, consultas y exportación con un catálogo aislado; completar backup y restauración consistente de SQLite.
+3. Añadir gestión de fuentes, exclusiones y cola persistente; después probar el arrastre nativo hacia Ableton Live y Finder.
+4. Resolver fades, selección/recuperación de salida y decisión FFmpeg; medir rendimiento antes de cerrar formalmente la fase 1.
