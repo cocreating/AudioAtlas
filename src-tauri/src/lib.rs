@@ -50,7 +50,10 @@ pub fn run() {
             commands::add_to_collection,
             commands::remove_from_collection,
             commands::save_smart_query,
-            commands::delete_smart_query
+            commands::delete_smart_query,
+            commands::scan_duplicates,
+            commands::get_file_duplicates,
+            commands::duplicate_summary
         ])
         .run(tauri::generate_context!())
         .expect("No se pudo iniciar Audio Atlas");

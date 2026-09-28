@@ -43,6 +43,22 @@ export interface AudioFile {
   notes: string;
   rating: number;
   userStatus: string;
+  duplicateCount: number;
+}
+
+export interface DuplicateLocation {
+  fileId: string;
+  rootId: string;
+  rootName: string;
+  relativePath: string;
+  fullPath: string;
+  size: number;
+}
+
+export interface DuplicateSummary {
+  duplicateFilesCount: number;
+  duplicateGroupsCount: number;
+  wastedBytes: number;
 }
 
 export interface Cursor {
@@ -57,6 +73,7 @@ export interface Library {
   smartQueries: SmartQuery[];
   total: number;
   favorites: number;
+  duplicates: number;
   matched: number;
   next: Cursor | null;
   scanning: boolean;
@@ -124,6 +141,7 @@ export const api = {
     format: string | null;
     collectionId?: string | null;
     minRating?: number | null;
+    duplicatesOnly?: boolean;
     after: Cursor | null;
   }) => invoke<Library>('library', { query }),
   chooseRoot: () => invoke<string | null>('choose_root'),
@@ -152,7 +170,13 @@ export const api = {
     invoke<void>('remove_from_collection', { collectionId, fileIds }),
   saveSmartQuery: (name: string, filterJson: string) =>
     invoke<SmartQuery>('save_smart_query', { name, filterJson }),
-  deleteSmartQuery: (id: string) => invoke<void>('delete_smart_query', { id })
+  deleteSmartQuery: (id: string) => invoke<void>('delete_smart_query', { id }),
+
+  // Duplicados exactos
+  scanDuplicates: () => invoke<DuplicateSummary>('scan_duplicates'),
+  getFileDuplicates: (fileId: string) =>
+    invoke<DuplicateLocation[]>('get_file_duplicates', { fileId }),
+  duplicateSummary: () => invoke<DuplicateSummary>('duplicate_summary')
 };
 
 export function time(seconds: number | null): string {

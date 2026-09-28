@@ -1322,3 +1322,106 @@ main {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Duplicados exactos */
+.badge-duplicate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #2d2a1b;
+  border: 1px solid #574f2e;
+  color: #dfce85;
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.duplicate-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: #1c2018;
+  border: 1px solid #333d2e;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 0.82rem;
+  color: #c5d6ba;
+}
+.duplicate-summary-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.duplicate-summary-stats strong {
+  color: #ebf5e3;
+}
+.duplicate-box {
+  margin-top: 14px;
+  padding: 12px;
+  background: #171b14;
+  border: 1px solid #2e3828;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.duplicate-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #c9dbbd;
+}
+.duplicate-box-header span.badge {
+  background: #2e2815;
+  color: #e6cf73;
+  border: 1px solid #594c25;
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.duplicate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.duplicate-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #10140e;
+  border: 1px solid #22291d;
+  border-radius: 6px;
+  font-size: 0.78rem;
+}
+.duplicate-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.duplicate-item-path {
+  color: #dfead7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+  font-size: 0.74rem;
+}
+.duplicate-item-root {
+  color: #8b9982;
+  font-size: 0.7rem;
+}
+.duplicate-notice {
+  font-size: 0.72rem;
+  color: #87977c;
+  line-height: 1.4;
+  border-left: 2px solid #57654b;
+  padding-left: 8px;
+  margin-top: 4px;
+}

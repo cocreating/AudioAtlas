@@ -1,4 +1,4 @@
-# Arquitectura · incremento 02
+# Arquitectura · incremento 04
 
 ## Estructura
 
@@ -7,17 +7,18 @@ src/
   lib/api.ts               Contrato de IPC y tipos de la interfaz
   lib/Audition.svelte      Forma de onda, seek y controles de loop A/B
   lib/Icon.svelte          Iconos locales
-  routes/+page.svelte      Biblioteca, inspector, bandeja y transporte
+  routes/+page.svelte      Biblioteca, colecciones, inspector, duplicados, bandeja y transporte
   routes/+layout.ts        SPA sin SSR
   app.css                  CSS nativo
 src-tauri/
   src/lib.rs               Arranque y estado administrado
   src/commands.rs          Comandos IPC y diálogos de autorización
-  src/catalog.rs           SQLite, escaneo, consultas, anotaciones y copias
+  src/catalog.rs           SQLite, escaneo, consultas, colecciones, smart queries, duplicados y copias
   src/playback.rs          Servicio de audio con canal de mensajes
   src/audio_stream.rs      Decoder dedicado y FIFO de tamaño fijo
   src/waveform.rs          Envolvente multinivel y caché por contenido
   migrations/001_catalog.sql
+  migrations/002_phase1.sql
   capabilities/main.json
 scripts/create-fixtures.py Audios originales de prueba
 scripts/create-codec-fixtures.py Corpus opcional de siete formatos
@@ -25,15 +26,15 @@ scripts/create-codec-fixtures.py Corpus opcional de siete formatos
 
 ## Decisiones
 
-- Se respeta Tauri 2 + SvelteKit 2 + Svelte 5/TypeScript + adapter-static + CSS nativo de la propuesta. La UI no incorpora servicios, contenido remoto ni telemetría.
-- SQLite bundled, migración inicial, foreign keys, WAL y FTS5. Cada operación abre su conexión; el escaneo no mantiene una transacción sobre todo el lote y las búsquedas pueden ejecutarse mientras avanza.
-- Consultas parametrizadas con palabras FTS escapadas y prefijos; sin concatenar texto de usuario a SQL. Debounce de 180 ms y rechazo de respuestas antiguas en la interfaz. La cancelación real de SQL no está implementada.
-- Resultados por cursor `(name,id)` y 100 filas por página. La virtualización de la tabla y los benchmarks de 100.000 registros son el siguiente incremento de rendimiento.
+- Se respeta Tauri 2 + SvelteKit 2 + Svelte 5 (runes exclusivos `$state`, `$derived`, `$props`) + adapter-static + CSS nativo de la propuesta. La UI no incorpora servicios, contenido remoto ni telemetría.
+- SQLite bundled, migraciones secuenciales versionadas (`001_catalog.sql` -> `002_phase1.sql`), foreign keys, WAL y FTS5. Cada operación abre su conexión; el escaneo no mantiene una transacción sobre todo el lote y las búsquedas pueden ejecutarse mientras avanza.
+- Consultas parametrizadas con palabras FTS escapadas y prefijos; sin concatenar texto de usuario a SQL. Debounce de 180 ms y rechazo de respuestas antiguas en la interfaz. Paginación acotada por cursor `(name, id)` con 100 registros por página.
 - Una fuente se autoriza mediante diálogo iniciado en Rust. No hay comandos que acepten rutas arbitrarias para leer audio o exportar. Reproducción, Finder y copias resuelven IDs del catálogo y comprueban la ruta canónica dentro de la fuente.
-- Las raíces solapadas se rechazan y el recorrido no sigue enlaces simbólicos. Se ignoran entradas ocultas y placeholders macOS `UF_DATALESS`. Las entradas de otras nubes no están validadas todavía.
-- Escaneo en un hilo dedicado con un guard para impedir escaneos simultáneos; publicación de progreso cada 10 candidatos y al finalizar. Sólo reescaneo manual incremental por tamaño/mtime. No hay aún watcher, volumen UUID, exclusiones configurables ni cola persistente.
-- Los originales se abren en lectura. Un cambio de tamaño/mtime durante la inspección invalida el resultado y se recoge como incidencia; requiere reescaneo manual. La falta de una raíz produce estado offline al consultar; no borra anotaciones. Falta una vista detallada de incidencias por archivo para permisos y cambios concurrentes.
-- El esquema implementa sólo roots, files, annotations, FTS y exports para la primera vertical. Tags normalizados, contents, analyses, collections, jobs, regions y smart_queries se añadirán mediante futuras migraciones, no mediante tablas vacías que aparenten funcionalidad.
+- Las raíces solapadas se rechazan y el recorrido no sigue enlaces simbólicos. Se ignoran entradas ocultas y placeholders macOS `UF_DATALESS`.
+- Escaneo en un hilo dedicado con un guard para impedir escaneos simultáneos; publicación de progreso y reescaneo manual incremental por tamaño/mtime. Al finalizar el escaneo, se indexan automáticamente los candidatos a duplicados exactos.
+- Los originales se abren en lectura. Un cambio de tamaño/mtime durante la inspección invalida el resultado y se recoge como incidencia; requiere reescaneo manual. La falta de una raíz produce estado offline al consultar; no borra anotaciones.
+- Colecciones manuales y consultas inteligentes: tablas `collections`, `collection_items` (con orden y borrado en cascada) y `smart_queries` (filtros JSON guardados). Valoraciones (0–5) en SQLite asociadas al catálogo.
+- Duplicados exactos: tablas `contents` y `file_contents`. Algoritmo de dos fases (prefiltrado por tamaño común y cálculo criptográfico SHA-256 en bloques streaming de 64 KiB). Inmutabilidad estricta: los archivos jamás se borran ni modifican; se exponen sus ubicaciones físicas para revelarlas en Finder.
 
 ## Motor de audio provisional
 

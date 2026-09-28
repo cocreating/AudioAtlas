@@ -13,6 +13,8 @@
     type AudioFile,
     type Collection,
     type SmartQuery,
+    type DuplicateLocation,
+    type DuplicateSummary,
     type Cursor,
     type Player,
     type Progress,
@@ -27,13 +29,19 @@
     smartQueries: [],
     total: 0,
     favorites: 0,
+    duplicates: 0,
     matched: 0,
     next: null,
     scanning: false
   });
   let search = $state('');
   let searchInput: HTMLInputElement;
-  let view = $state<'all' | 'favorites' | 'tray' | 'collection'>('all');
+  let view = $state<'all' | 'favorites' | 'tray' | 'collection' | 'duplicates'>(
+    'all'
+  );
+  let selectedDuplicates = $state<DuplicateLocation[]>([]);
+  let duplicateSummary = $state<DuplicateSummary | null>(null);
+  let scanningDuplicates = $state(false);
   let rootId = $state<string | null>(null);
   let activeCollectionId = $state<string | null>(null);
   let format = $state('');
@@ -100,11 +108,13 @@
       ? 'Tus favoritos'
       : view === 'tray'
         ? 'Bandeja de sesión'
-        : view === 'collection'
-          ? (data.collections.find((c) => c.id === activeCollectionId)?.name ??
-            'Colección')
-          : (data.roots.find((r) => r.id === rootId)?.name ??
-            'Todos los sonidos')
+        : view === 'duplicates'
+          ? 'Archivos duplicados'
+          : view === 'collection'
+            ? (data.collections.find((c) => c.id === activeCollectionId)
+                ?.name ?? 'Colección')
+            : (data.roots.find((r) => r.id === rootId)?.name ??
+              'Todos los sonidos')
   );
 
   async function refresh(after: Cursor | null = cursor) {
@@ -114,11 +124,12 @@
     try {
       const result = await api.library({
         text: search,
-        rootId: view === 'collection' ? null : rootId,
+        rootId: view === 'collection' || view === 'duplicates' ? null : rootId,
         favorites: view === 'favorites',
         format: format || null,
         collectionId: view === 'collection' ? activeCollectionId : null,
         minRating: minRating > 0 ? minRating : null,
+        duplicatesOnly: view === 'duplicates',
         after
       });
       if (token === request) {
@@ -153,7 +164,38 @@
     activeCollectionId = collectionId;
     cursor = null;
     history = [];
+    if (next === 'duplicates') {
+      void loadDuplicateSummary();
+    }
     void refresh();
+  }
+  async function loadDuplicateSummary() {
+    if (!desktop) return;
+    try {
+      duplicateSummary = await api.duplicateSummary();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  async function triggerScanDuplicates() {
+    if (!desktop) return;
+    scanningDuplicates = true;
+    try {
+      duplicateSummary = await api.scanDuplicates();
+      await refresh(null);
+      notice = 'Análisis de duplicados completado.';
+    } catch (e) {
+      error = String(e);
+    } finally {
+      scanningDuplicates = false;
+    }
+  }
+  async function loadFileDuplicates(fileId: string) {
+    try {
+      selectedDuplicates = await api.getFileDuplicates(fileId);
+    } catch (e) {
+      console.error(e);
+    }
   }
   async function run(action: () => Promise<unknown>) {
     error = '';
@@ -188,6 +230,10 @@
     tags = file.tags.join(', ');
     notes = file.notes;
     rating = file.rating;
+    selectedDuplicates = [];
+    if (file.duplicateCount > 0) {
+      void loadFileDuplicates(file.id);
+    }
   }
   async function save(favorite = selected?.favorite ?? false) {
     if (!selected || saving) return;
@@ -511,6 +557,13 @@
           >{tray.length}</span
         ></button
       >
+      <button
+        class:active={view === 'duplicates'}
+        onclick={() => navigate('duplicates')}
+        ><Icon name="copy" />Duplicados<span class="nav-count"
+          >{data.duplicates}</span
+        ></button
+      >
     </nav>
 
     <div class="section-heading">
@@ -777,6 +830,33 @@
         </div>
       </form>
     {/if}
+    {#if view === 'duplicates' && duplicateSummary}
+      <div class="duplicate-summary-bar">
+        <div class="duplicate-summary-stats">
+          <span
+            ><strong>{duplicateSummary.duplicateFilesCount}</strong> archivos duplicados</span
+          >
+          <span>•</span>
+          <span
+            ><strong>{duplicateSummary.duplicateGroupsCount}</strong> grupos de contenido</span
+          >
+          <span>•</span>
+          <span
+            ><strong>{bytes(duplicateSummary.wastedBytes)}</strong> de espacio duplicado</span
+          >
+        </div>
+        <button
+          type="button"
+          class="secondary"
+          style="padding: 4px 10px; font-size: 0.78rem;"
+          onclick={triggerScanDuplicates}
+          disabled={scanningDuplicates}
+        >
+          <Icon name="refresh" size={13} />
+          {scanningDuplicates ? 'Analizando…' : 'Reanalizar duplicados'}
+        </button>
+      </div>
+    {/if}
     {#if error}<div class="message error" role="alert">
         <span>{error}</span><button
           class="icon-button"
@@ -842,6 +922,12 @@
                               class="rating-badge"
                               title="{file.rating} estrellas"
                               >{'★'.repeat(file.rating)}</span
+                            >{/if}{#if file.duplicateCount > 0}<span
+                              class="badge-duplicate"
+                              title="{file.duplicateCount +
+                                1} copias idénticas en la biblioteca"
+                              ><Icon name="copy" size={11} />
+                              {file.duplicateCount + 1}</span
                             >{/if}<small
                             >{file.status !== 'ready'
                               ? ({
@@ -932,9 +1018,11 @@
                   ? 'Los sonidos que quieras volver a escuchar'
                   : view === 'tray'
                     ? 'Prepara tu próxima sesión'
-                    : view === 'collection'
-                      ? 'Colección vacía'
-                      : 'Tu universo sonoro, en un solo lugar.'}
+                    : view === 'duplicates'
+                      ? 'No se han detectado duplicados'
+                      : view === 'collection'
+                        ? 'Colección vacía'
+                        : 'Tu universo sonoro, en un solo lugar.'}
             </h2>
             <p>
               {search || format || minRating
@@ -943,9 +1031,11 @@
                   ? 'Marca un sonido con el corazón del inspector para guardarlo aquí.'
                   : view === 'tray'
                     ? 'Añade sonidos desde la biblioteca y exporta una selección de copias.'
-                    : view === 'collection'
-                      ? 'Añade sonidos a esta colección desde el inspector lateral.'
-                      : 'Conecta una carpeta para explorar, escuchar y organizar tus audios, sin mover los originales.'}
+                    : view === 'duplicates'
+                      ? 'Todos los archivos analizados en tu biblioteca tienen contenidos únicos.'
+                      : view === 'collection'
+                        ? 'Añade sonidos a esta colección desde el inspector lateral.'
+                        : 'Conecta una carpeta para explorar, escuchar y organizar tus audios, sin mover los originales.'}
             </p>
             {#if !search && !format && !minRating && view === 'all'}<button
                 class="primary"
@@ -1107,6 +1197,43 @@
             >
               <Icon name="close" size={13} />Quitar de esta colección
             </button>
+          {/if}
+          {#if selectedDuplicates.length > 0}
+            <div class="duplicate-box">
+              <div class="duplicate-box-header">
+                <span>Ubicaciones idénticas</span>
+                <span class="badge"
+                  >{selectedDuplicates.length}
+                  {selectedDuplicates.length === 1 ? 'copia' : 'copias'}</span
+                >
+              </div>
+              <div class="duplicate-list">
+                {#each selectedDuplicates as dup (dup.fileId)}
+                  <div class="duplicate-item">
+                    <div class="duplicate-item-info">
+                      <span class="duplicate-item-path" title={dup.fullPath}
+                        >{dup.relativePath}</span
+                      >
+                      <span class="duplicate-item-root"
+                        >Fuente: {dup.rootName} ({bytes(dup.size)})</span
+                      >
+                    </div>
+                    <button
+                      type="button"
+                      class="icon-button"
+                      title="Mostrar copia en Finder"
+                      onclick={() => run(() => api.reveal(dup.fileId))}
+                    >
+                      <Icon name="external" size={13} />
+                    </button>
+                  </div>
+                {/each}
+              </div>
+              <p class="duplicate-notice">
+                Hash SHA-256 verificado en streaming. Los archivos originales
+                son de sólo lectura y no se modifican.
+              </p>
+            </div>
           {/if}
           <button
             class="text-button reveal"

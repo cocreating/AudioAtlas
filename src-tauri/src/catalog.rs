@@ -67,6 +67,7 @@ pub struct AudioFile {
     pub notes: String,
     pub rating: u8,
     pub user_status: String,
+    pub duplicate_count: u32,
 }
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +78,7 @@ pub struct Query {
     pub format: Option<String>,
     pub collection_id: Option<String>,
     pub min_rating: Option<u8>,
+    pub duplicates_only: bool,
     pub after: Option<Cursor>,
 }
 #[derive(Serialize, Deserialize, Clone)]
@@ -93,9 +95,27 @@ pub struct Library {
     pub smart_queries: Vec<SmartQuery>,
     pub total: i64,
     pub favorites: i64,
+    pub duplicates: i64,
     pub matched: i64,
     pub next: Option<Cursor>,
     pub scanning: bool,
+}
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateLocation {
+    pub file_id: String,
+    pub root_id: String,
+    pub root_name: String,
+    pub relative_path: String,
+    pub full_path: String,
+    pub size: i64,
+}
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateSummary {
+    pub duplicate_files_count: i64,
+    pub duplicate_groups_count: i64,
+    pub wasted_bytes: i64,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -360,6 +380,7 @@ impl Catalog {
                 [root_id],
             )?;
         }
+        let _ = self.index_duplicates();
         report.done = true;
         progress(report.clone());
         Ok(report)
@@ -375,6 +396,16 @@ impl Catalog {
             [],
             |r| r.get(0),
         )?;
+        let duplicates: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT fc.file_id) \
+                 FROM file_contents fc \
+                 JOIN (SELECT hash FROM file_contents GROUP BY hash HAVING COUNT(*) > 1) d \
+                   ON d.hash = fc.hash",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
         let search = query
             .text
             .split_whitespace()
@@ -387,7 +418,7 @@ impl Catalog {
         } else {
             Some(search)
         };
-        let base = "FROM files f JOIN annotations a ON a.file_id=f.id WHERE (?1 IS NULL OR f.id IN (SELECT file_id FROM search WHERE search MATCH ?1)) AND (?2 IS NULL OR f.root_id=?2) AND (?3=0 OR a.favorite=1) AND (?4 IS NULL OR f.format=?4) AND (?5 IS NULL OR f.id IN (SELECT file_id FROM collection_items WHERE collection_id=?5)) AND (?6 IS NULL OR a.rating>=?6)";
+        let base = "FROM files f JOIN annotations a ON a.file_id=f.id WHERE (?1 IS NULL OR f.id IN (SELECT file_id FROM search WHERE search MATCH ?1)) AND (?2 IS NULL OR f.root_id=?2) AND (?3=0 OR a.favorite=1) AND (?4 IS NULL OR f.format=?4) AND (?5 IS NULL OR f.id IN (SELECT file_id FROM collection_items WHERE collection_id=?5)) AND (?6 IS NULL OR a.rating>=?6) AND (?7=0 OR f.id IN (SELECT fc.file_id FROM file_contents fc JOIN (SELECT hash FROM file_contents GROUP BY hash HAVING COUNT(*) > 1) d ON d.hash = fc.hash))";
         let matched = conn.query_row(
             &format!("SELECT COUNT(*) {base}"),
             params![
@@ -396,11 +427,17 @@ impl Catalog {
                 query.favorites,
                 query.format,
                 query.collection_id,
-                query.min_rating
+                query.min_rating,
+                query.duplicates_only
             ],
             |r| r.get(0),
         )?;
-        let sql = format!("SELECT f.id,f.root_id,f.name,f.relative_path,f.size,f.format,f.codec,f.duration,f.sample_rate,f.channels,f.bit_depth,f.status,f.error,a.favorite,a.tags,a.notes,a.rating,a.status {base} AND (?7 IS NULL OR (f.name,f.id)>(?7,?8)) ORDER BY f.name,f.id LIMIT 101");
+        let sql = format!(
+            "SELECT f.id,f.root_id,f.name,f.relative_path,f.size,f.format,f.codec,f.duration,f.sample_rate,\
+             f.channels,f.bit_depth,f.status,f.error,a.favorite,a.tags,a.notes,a.rating,a.status,\
+             MAX(0, COALESCE((SELECT COUNT(*) - 1 FROM file_contents fc2 WHERE fc2.hash = (SELECT hash FROM file_contents fc WHERE fc.file_id = f.id)), 0)) \
+             {base} AND (?8 IS NULL OR (f.name,f.id)>(?8,?9)) ORDER BY f.name,f.id LIMIT 101"
+        );
         let mut files = conn
             .prepare(&sql)?
             .query_map(
@@ -411,6 +448,7 @@ impl Catalog {
                     query.format,
                     query.collection_id,
                     query.min_rating,
+                    query.duplicates_only,
                     query.after.as_ref().map(|x| &x.name),
                     query.after.as_ref().map(|x| &x.id)
                 ],
@@ -434,6 +472,7 @@ impl Catalog {
                         notes: r.get(15)?,
                         rating: r.get(16)?,
                         user_status: r.get(17)?,
+                        duplicate_count: r.get::<_, i64>(18)? as u32,
                     })
                 },
             )?
@@ -459,6 +498,7 @@ impl Catalog {
             smart_queries,
             total,
             favorites,
+            duplicates,
             matched,
             next,
             scanning: false,
@@ -699,6 +739,128 @@ impl Catalog {
             return Err("Filtro guardado no encontrado".into());
         }
         Ok(())
+    }
+    pub fn index_duplicates(&self) -> Result<usize> {
+        let mut conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            "SELECT f.id, r.path, f.relative_path, f.size \
+             FROM files f \
+             JOIN roots r ON r.id = f.root_id \
+             WHERE f.status != 'offline' \
+               AND f.size > 0 \
+               AND f.size IN ( \
+                   SELECT size FROM files WHERE status != 'offline' AND size > 0 GROUP BY size HAVING COUNT(*) > 1 \
+               ) \
+               AND f.id NOT IN (SELECT file_id FROM file_contents)",
+        )?;
+        let candidates = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+
+        let tx = conn.transaction()?;
+        let mut indexed = 0;
+        for (file_id, root_path, rel_path, size) in candidates {
+            let full_path = Path::new(&root_path).join(&rel_path);
+            if !full_path.is_file() {
+                continue;
+            }
+            let digest = match hash_file(&full_path) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+
+            tx.execute(
+                "INSERT OR IGNORE INTO contents (hash, size) VALUES (?1, ?2)",
+                params![digest, size],
+            )?;
+
+            tx.execute(
+                "INSERT INTO file_contents (file_id, hash) VALUES (?1, ?2) \
+                 ON CONFLICT(file_id) DO UPDATE SET hash = excluded.hash",
+                params![file_id, digest],
+            )?;
+            indexed += 1;
+        }
+        tx.commit()?;
+        Ok(indexed)
+    }
+    pub fn duplicate_summary(&self) -> Result<DuplicateSummary> {
+        let conn = self.connect()?;
+        let (files_count, groups_count, wasted_bytes): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT \
+                    COALESCE((SELECT COUNT(fc.file_id) FROM file_contents fc WHERE fc.hash IN (SELECT hash FROM file_contents GROUP BY hash HAVING COUNT(*) > 1)), 0), \
+                    COALESCE((SELECT COUNT(*) FROM (SELECT hash FROM file_contents GROUP BY hash HAVING COUNT(*) > 1)), 0), \
+                    COALESCE((SELECT SUM(c.size * (cnt - 1)) FROM (SELECT hash, COUNT(*) as cnt FROM file_contents GROUP BY hash HAVING cnt > 1) dup JOIN contents c ON c.hash = dup.hash), 0)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap_or((0, 0, 0));
+
+        Ok(DuplicateSummary {
+            duplicate_files_count: files_count,
+            duplicate_groups_count: groups_count,
+            wasted_bytes,
+        })
+    }
+    pub fn get_file_duplicates(&self, file_id: &str) -> Result<Vec<DuplicateLocation>> {
+        let mut conn = self.connect()?;
+        let has_content: bool = conn
+            .query_row(
+                "SELECT 1 FROM file_contents WHERE file_id = ?1",
+                [file_id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+
+        if !has_content {
+            drop(conn);
+            let _ = self.index_duplicates();
+            conn = self.connect()?;
+        }
+
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.root_id, r.name, f.relative_path, r.path, f.size \
+             FROM file_contents fc \
+             JOIN file_contents fc_target ON fc_target.hash = fc.hash \
+             JOIN files f ON f.id = fc.file_id \
+             JOIN roots r ON r.id = f.root_id \
+             WHERE fc_target.file_id = ?1 AND f.id != ?1 \
+             ORDER BY r.name COLLATE NOCASE, f.relative_path COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map([file_id], |r| {
+            let root_path: String = r.get(4)?;
+            let rel_path: String = r.get(3)?;
+            let full_path = Path::new(&root_path)
+                .join(&rel_path)
+                .to_string_lossy()
+                .into_owned();
+            Ok(DuplicateLocation {
+                file_id: r.get(0)?,
+                root_id: r.get(1)?,
+                root_name: r.get(2)?,
+                relative_path: rel_path,
+                full_path,
+                size: r.get(5)?,
+            })
+        })?;
+
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
     pub fn export(&self, ids: &[String], destination: &Path) -> Result<ExportResult> {
         if ids.is_empty() || ids.len() > 1000 {
@@ -1114,5 +1276,89 @@ mod tests {
 
         catalog.delete_smart_query(&sq.id).unwrap();
         assert_eq!(catalog.list_smart_queries().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_exact_duplicate_detection_by_streaming_hash() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("samples");
+        fs::create_dir_all(root.join("subfolder")).unwrap();
+
+        // 1. Create original kick and an exact duplicate in subfolder
+        let kick1 = root.join("kick_orig.wav");
+        wav(&kick1);
+        let kick2 = root.join("subfolder").join("kick_copy.wav");
+        fs::copy(&kick1, &kick2).unwrap();
+
+        // 2. Create another sound (snare) with different duration/samples
+        let snare = root.join("snare.wav");
+        let mut w = hound::WavWriter::create(
+            &snare,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 44100,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        for _ in 0..22050 {
+            w.write_sample(500i16).unwrap();
+        }
+        w.finalize().unwrap();
+
+        let db = temp.path().join("catalog.sqlite");
+        let catalog = Catalog::open(db).unwrap();
+        let root_id = catalog.add_root(&root).unwrap();
+
+        let scan = catalog
+            .scan(&root_id, &AtomicBool::new(false), |_| {})
+            .unwrap();
+        assert_eq!(scan.indexed, 3);
+        assert_eq!(scan.errors, 0);
+
+        // Scan automatically indexes duplicates via streaming SHA-256
+        let summary = catalog.duplicate_summary().unwrap();
+        assert_eq!(summary.duplicate_files_count, 2);
+        assert_eq!(summary.duplicate_groups_count, 1);
+        assert_eq!(
+            summary.wasted_bytes,
+            fs::metadata(&kick1).unwrap().len() as i64
+        );
+
+        // Query duplicates only
+        let dup_view = catalog
+            .query(Query {
+                duplicates_only: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(dup_view.matched, 2);
+        assert_eq!(dup_view.files.len(), 2);
+        assert_eq!(dup_view.duplicates, 2);
+        assert_eq!(dup_view.files[0].duplicate_count, 1);
+        assert_eq!(dup_view.files[1].duplicate_count, 1);
+
+        // Get file duplicates for kick1
+        let kick1_file = dup_view
+            .files
+            .iter()
+            .find(|f| f.name == "kick_orig.wav")
+            .unwrap();
+        let dups = catalog.get_file_duplicates(&kick1_file.id).unwrap();
+        assert_eq!(dups.len(), 1);
+        assert_eq!(dups[0].relative_path, "subfolder/kick_copy.wav");
+        assert_eq!(dups[0].size, kick1_file.size);
+
+        // Non-duplicate snare has 0 duplicates
+        let all_files = catalog.query(Query::default()).unwrap();
+        let snare_file = all_files
+            .files
+            .iter()
+            .find(|f| f.name == "snare.wav")
+            .unwrap();
+        assert_eq!(snare_file.duplicate_count, 0);
+        let snare_dups = catalog.get_file_duplicates(&snare_file.id).unwrap();
+        assert_eq!(snare_dups.len(), 0);
     }
 }

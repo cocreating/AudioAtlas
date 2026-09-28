@@ -1,8 +1,29 @@
 # Avance y continuidad
 
-Actualizado: 27 de septiembre de 2026.
+Actualizado: 28 de septiembre de 2026.
 
-## Incremento 03 · Fase 1: modelo de datos consolidado, colecciones y ratings
+## Incremento 04 · Fase 1: detección de duplicados exactos por streaming hash SHA-256
+
+Implementado en backend y base de datos:
+- Algoritmo de dos fases conforme a especificación: filtrado previo de candidatos por tamaño idéntico (`size > 0`), seguido de cálculo en streaming de SHA-256 en bloques de 64 KiB para no saturar memoria.
+- Persistencia atómica en SQLite en las tablas `contents` y `file_contents` de la migración v2.
+- Indexación automática cooperativa al completar cada escaneo de fuentes en `catalog.scan()`, y bajo demanda mediante `index_duplicates()`.
+- Resumen matemático de duplicados (`duplicate_summary`): conteo de archivos implicados, grupos de contenido idéntico y bytes redundantes en disco.
+- Consulta de ubicaciones idénticas (`get_file_duplicates`): resolución de rutas físicas de todas las copias de un archivo para revelarlas en Finder.
+- Filtro `duplicates_only: bool` y recuento de copias (`duplicate_count`) integrado en `catalog.query()`.
+- Comandos Tauri IPC: `scan_duplicates`, `get_file_duplicates`, `duplicate_summary`.
+- Pruebas automatizadas: 11 pruebas unitarias pasando, incluyendo `test_exact_duplicate_detection_by_streaming_hash` (verificación de detección, cálculo de bytes duplicados, filtrado de duplicados y garantía de archivos originales intactos).
+
+Implementado en UI (Svelte 5):
+- Barra lateral: acceso "Duplicados" bajo `BIBLIOTECA` con insignia numérica en vivo de archivos duplicados.
+- Vista de duplicados: barra resumen superior con total de archivos duplicados, grupos de contenido, espacio duplicado formateado (KB/MB/GB) y botón de reanálisis.
+- Tabla central: insignia de copias idénticas en la fila del sonido (`X copias`).
+- Panel inspector: tarjeta "Ubicaciones idénticas" con listado de fuentes, rutas relativas, tamaño y botón directo "Mostrar en Finder" para cada copia física.
+- Garantía estricta de seguridad: aviso informativo de que los archivos son de sólo lectura y no se modifican, renombran ni eliminan.
+- Typecheck (`npm run check`): 0 errores y 0 advertencias.
+- Bundle de macOS (`Audio Atlas.app`, 39,57 MiB) generado y ejecutado localmente.
+
+## Incremento 03 · Fase 1: modelo de datos consolidado, colecciones y ratings (histórico)
 
 Implementado en backend y migración (Paso 1):
 

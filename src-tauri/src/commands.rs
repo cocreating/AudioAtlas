@@ -1,5 +1,8 @@
 use crate::{
-    catalog::{Annotation, Collection, ExportResult, Library, Query, SmartQuery},
+    catalog::{
+        Annotation, Collection, DuplicateLocation, DuplicateSummary, ExportResult, Library, Query,
+        SmartQuery,
+    },
     playback::{Control, PlayerState},
     AppState,
 };
@@ -253,4 +256,34 @@ pub async fn save_smart_query(
 pub async fn delete_smart_query(app: AppHandle, id: String) -> Result<(), String> {
     let catalog = app.state::<AppState>().catalog.clone();
     blocking(move || catalog.delete_smart_query(&id).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn scan_duplicates(app: AppHandle) -> Result<DuplicateSummary, String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || {
+        catalog.index_duplicates().map_err(|e| e.to_string())?;
+        catalog.duplicate_summary().map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_file_duplicates(
+    app: AppHandle,
+    file_id: String,
+) -> Result<Vec<DuplicateLocation>, String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || {
+        catalog
+            .get_file_duplicates(&file_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn duplicate_summary(app: AppHandle) -> Result<DuplicateSummary, String> {
+    let catalog = app.state::<AppState>().catalog.clone();
+    blocking(move || catalog.duplicate_summary().map_err(|e| e.to_string())).await
 }
